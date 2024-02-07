@@ -78,6 +78,7 @@ constexpr bool matchAllCharsBut(const char* list,
   return m;
 }
 
+/// Matches a specific char
 constexpr bool match(const char*& str,
 		     const char& c)
 {
@@ -86,6 +87,7 @@ constexpr bool match(const char*& str,
   
   if(m)
     str++;
+  
   return m;
 }
 
@@ -110,25 +112,61 @@ constexpr RegexParserNode matchAndAddSubExpr(const char*& str)
   return {RegexParserNode::UNDEF,{}};
 }
 
+constexpr RegexParserNode matchAndAddDot(const char*& str)
+{
+  using enum RegexParserNode::Type;
+  
+  if(match(str,'.'))
+    return {CHAR,{},0,std::numeric_limits<int>::max()};
+  else
+    return {UNDEF,{}};
+}
+
+constexpr RegexParserNode matchEscapedChar(const char*& str)
+{
+  using enum RegexParserNode::Type;
+  
+  if(const char* tmp=str;
+     match(tmp,'\\') and *tmp!='\0')
+    {
+      str+=2;
+      printf("escaping: %c\n",*tmp);
+      for(const auto& [c,r] : {std::make_pair('b','\b'),{'n','\n'},{'f','\f'},{'r','\r'},{'t','\t'}})
+	if(*tmp==c)
+	  return {CHAR,{},r,r+1};
+      
+      return {CHAR,{},*tmp,*tmp+1};
+    }
+  
+  return {UNDEF,{}};
+}
+
 constexpr RegexParserNode matchAndAddCharExpr(const char*& str)
 {
   using enum RegexParserNode::Type;
   
-  const char c=
-    *str;
-
-  if(match(str,'.'))
-    return {CHAR,{},0,std::numeric_limits<int>::max()};
-  else 
-    if(matchAllCharsBut("|*+?()",c))
-      {
-	str++;
-	return
-	  {CHAR,{},c,c+1};
-      }
-    else
+  if(RegexParserNode m=
+     matchAndAddDot(str);
+     m)
+    return m;
+  else if(RegexParserNode m=matchEscapedChar(str);
+	  m)
+    {
+      printf("matched: %c %d-%d\n",m.begChar,m.begChar,m.endChar);
+      return m;
+    }
+  else if(const char c=
+	  *str;
+	  matchAllCharsBut("|*+?()",c))
+    {
+      str++;
+      
       return
-	{UNDEF,{}};
+	{CHAR,{},c,c+1};
+    }
+  else
+    return
+      {UNDEF,{}};
 }
 
 constexpr RegexParserNode matchAndAddExpr(const char*& str)
@@ -149,7 +187,6 @@ constexpr RegexParserNode matchAndAddPossiblyPostfixedExpr(const char*& str)
      matchAndAddExpr(str);
      m)
     {
-      
       if(match(str,'+'))
 	return
 	  {NONZERO,{std::move(m)}};
@@ -177,7 +214,7 @@ constexpr RegexParserNode matchAndAddPossiblyAndedExpr(const char*& str)
   if(lhs)
     {
       if(RegexParserNode rhs=
-	 matchAndAddPossiblyPostfixedExpr(str);
+	 matchAndAddPossiblyAndedExpr(str);
 	 rhs)
 	return
 	  {AND,{std::move(lhs),std::move(rhs)}};
@@ -221,7 +258,9 @@ constexpr bool test(const char* const str,
   RegexParserNode t=
     matchAndAddPossiblyOrredExpr(probe);
   
-  if(t and (probe==str+len or (len==0 and *probe=='\0')))
+  printf("t: %d, *probe: %c\n",(bool)t,*probe);
+  
+  //if(t and (probe==str+len or (len==0 and *probe=='\0')))
     t.printf();
   
   return t;
@@ -231,7 +270,7 @@ int main(int narg,char** arg)
 {
   if(narg>1)
     test(arg[1]);
-  else 
+  else
     test("c|d(f?|g)");
   
   return 0;
