@@ -1,6 +1,6 @@
-#include <array>
 #include <cstdio>
 #include <limits>
+#include <vector>
 
 template <typename T>
 struct MyUniquePtr
@@ -62,201 +62,51 @@ using RegexParserNodeUPtr=
 
 struct RegexParserNode
 {
-  virtual constexpr const char* getTag() const=0;
+  enum Type{UNDEF,OR,AND,OPT,MANY,NONZERO,CHAR};
   
-  virtual constexpr size_t getNSubNodes() const=0;
-  
-  virtual constexpr const RegexParserNodeUPtr& getSubNode(const size_t& i) const=0;
-  
-  constexpr virtual ~RegexParserNode()
+  struct TypeSpecs
   {
-  }
-};
-
-constexpr void printf(const RegexParserNodeUPtr& p,
-	    const int& indLv=0)
-{
-  char* ind=new char[indLv+1];
-  for(int i=0;i<indLv;i++)
-    ind[i]=' ';
-  ind[indLv]='\0';
-  ::printf("%s %s\n",ind,p.ptr->getTag());
+    const char* const tag;
+    
+    const size_t nSubNodes;
+    
+    const char symbol;
+  };
   
-  for(size_t i=0;i<p.ptr->getNSubNodes();i++)
-    printf(p.ptr->getSubNode(i),indLv+1);
+  const Type type;
   
-  delete[] ind;
-}
-
-struct RegexParserOrNode :
-  RegexParserNode
-{
-  std::array<RegexParserNodeUPtr,2> subNodes;
+  static constexpr TypeSpecs typeSpecs[]={
+    {"UNDEF",0,'\0'},
+    {"OR",2,'|'},
+    {"AND",2,'&'},
+    {"OPT",1,'?'},
+    {"MANY",1,'?'},
+    {"NONZERO",1,'+'},
+    {"CHAR",0,'#'}};
   
-  constexpr size_t getNSubNodes() const
+  std::vector<RegexParserNodeUPtr> subNodes;
+  
+  constexpr void printf(const int& indLv=0)
   {
-    return 2;
-  }
-  
-  constexpr const RegexParserNodeUPtr& getSubNode(const size_t& i) const
-  {
-    return subNodes[i];
+    char* ind=new char[indLv+1];
+    for(int i=0;i<indLv;i++)
+      ind[i]=' ';
+    ind[indLv]='\0';
+    ::printf("%s %s\n",ind,typeSpecs[type].tag);
+    
+    for(const auto& subNode : subNodes)
+      subNode.ptr->printf(indLv+1);
+    
+    delete[] ind;
   }
   
-  constexpr const char* getTag() const
+  template <typename...T>
+  requires(std::is_same_v<T,RegexParserNodeUPtr> and...)
+  constexpr RegexParserNode(const Type& type,
+			    T&&...a) :
+    type(type)
   {
-    return "|";
-  }
-  
-  constexpr RegexParserOrNode()=default;
-  
-  constexpr RegexParserOrNode(RegexParserNodeUPtr&& a,
-			      RegexParserNodeUPtr&& b) :
-    subNodes({std::move(a),std::move(b)})
-  {
-  }
-};
-
-struct RegexParserAndNode :
-  RegexParserNode
-{
-  std::array<RegexParserNodeUPtr,2> subNodes;
-  
-  constexpr size_t getNSubNodes() const
-  {
-    return 2;
-  }
-  
-  constexpr const RegexParserNodeUPtr& getSubNode(const size_t& i) const
-  {
-    return subNodes[i];
-  }
-  
-  constexpr const char* getTag() const
-  {
-    return "&";
-  }
-  
-  constexpr RegexParserAndNode(RegexParserNodeUPtr&& a,
-			       RegexParserNodeUPtr&& b) :
-    subNodes({std::move(a),std::move(b)})
-  {
-  }
-};
-
-struct RegexParserOptionalNode :
-  RegexParserNode
-{
-  std::array<RegexParserNodeUPtr,1> subNodes;
-  
-  constexpr size_t getNSubNodes() const
-  {
-    return 1;
-  }
-  
-  constexpr const RegexParserNodeUPtr& getSubNode(const size_t& i) const
-  {
-    return subNodes[i];
-  }
-  
-  constexpr const char* getTag() const
-  {
-    return "?";
-  }
-  
-  constexpr RegexParserOptionalNode(RegexParserNodeUPtr&& a) :
-    subNodes{std::move(a)}
-  {
-  }
-};
-
-struct RegexParserManyNode :
-  RegexParserNode
-{
-  std::array<RegexParserNodeUPtr,1> subNodes;
-  
-  constexpr size_t getNSubNodes() const
-  {
-    return 1;
-  }
-  
-  constexpr const RegexParserNodeUPtr& getSubNode(const size_t& i) const
-  {
-    return subNodes[i];
-  }
-  
-  constexpr const char* getTag() const
-  {
-    return "*";
-  }
-  
-  constexpr RegexParserManyNode(RegexParserNodeUPtr&& a) :
-    subNodes{std::move(a)}
-  {
-  }
-};
-
-struct RegexParserNonZeroNode :
-  RegexParserNode
-{
-  std::array<RegexParserNodeUPtr,1> subNodes;
-  
-  constexpr size_t getNSubNodes() const
-  {
-    return 1;
-  }
-  
-  constexpr const RegexParserNodeUPtr& getSubNode(const size_t& i) const
-  {
-    return subNodes[i];
-  }
-  
-  constexpr const char* getTag() const
-  {
-    return "+";
-  }
-  
-  constexpr RegexParserNonZeroNode(RegexParserNodeUPtr&& a) :
-    subNodes{std::move(a)}
-  {
-  }
-};
-
-struct RegexParserCharsNode :
-  RegexParserNode
-{
-  int begin;
-  
-  int end;
-  
-  std::array<RegexParserNodeUPtr,0> subNodes;
-  
-  constexpr size_t getNSubNodes() const
-  {
-    return 0;
-  }
-  
-  constexpr const RegexParserNodeUPtr& getSubNode(const size_t& i) const
-  {
-    return subNodes[i];
-  }
-  
-  constexpr const char* getTag() const
-  {
-    return "<char>";
-  }
-  
-  constexpr RegexParserCharsNode() :
-    begin(0),
-    end(std::numeric_limits<int>::max())
-  {
-  }
-  
-  constexpr RegexParserCharsNode(const int& begin,
-		   const int& end) :
-    begin(begin),
-    end(end)
-  {
+    (subNodes.emplace_back(std::move(a)),...);
   }
 };
 
@@ -282,7 +132,7 @@ constexpr RegexParserNodeUPtr matchAndAddCharExpr(const char*& str)
     {
       str++;
       return
-	new RegexParserCharsNode(c,c+1);
+	new RegexParserNode(RegexParserNode::Type::CHAR);
     }
   else
     return RegexParserNodeUPtr{nullptr};
@@ -305,15 +155,17 @@ constexpr RegexParserNodeUPtr matchAndAddPossiblyPostfixedExpr(const char*& str)
      matchAndAddCharExpr(str);
      m)
     {
+      using enum RegexParserNode::Type;
+      
       if(match(str,'+'))
 	return
-	  new RegexParserNonZeroNode(std::move(m));
+	  new RegexParserNode(NONZERO,std::move(m));
       else if(match(str,'?'))
 	return
-	  new RegexParserOptionalNode(std::move(m));
+	  new RegexParserNode(OPT,std::move(m));
       else if (match(str,'*'))
 	return
-	  new RegexParserManyNode(std::move(m));
+	  new RegexParserNode(MANY,std::move(m));
       else
 	return
 	  m;
@@ -333,7 +185,7 @@ constexpr RegexParserNodeUPtr matchAndAddPossiblyAndedExpr(const char*& str)
 	matchAndAddPossiblyPostfixedExpr(str);
       if(rhs)
 	return
-	  new RegexParserAndNode(std::move(lhs),std::move(rhs));
+	  new RegexParserNode(RegexParserNode::Type::AND,std::move(lhs),std::move(rhs));
       else
 	return lhs;
     }
@@ -353,7 +205,7 @@ constexpr RegexParserNodeUPtr matchAndAddPossiblyOrredExpr(const char*& str)
 	     matchAndAddPossiblyAndedExpr(str);
 	     rhs)
 	    return
-	      new RegexParserOrNode(std::move(lhs),std::move(rhs));
+	      new RegexParserNode(RegexParserNode::Type::OR,std::move(lhs),std::move(rhs));
 	  else
 	    return lhs;
 	}
@@ -369,7 +221,7 @@ constexpr bool test(const char* str)
   RegexParserNodeUPtr t=
     matchAndAddPossiblyOrredExpr(str);
   
-  printf(t);
+  t.ptr->printf();
   
   return t.ptr!=nullptr;
 }
