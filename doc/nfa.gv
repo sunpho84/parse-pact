@@ -1,0 +1,11 @@
+digraph nfa
+{
+    // 3 -> 2 [label="d"];
+    // 2 -> 4 [label="€"];
+    // 3 -> 4 [label="€"];
+    // 4 -> 5 [label="e"];
+    
+    2 -> 1 [label="d"];
+    2 -> 1 [label="ε"];
+    1 -> 0 [label="e"];
+}

@@ -2,23 +2,29 @@
 #include <limits>
 #include <vector>
 
-struct RegexParserNode;
-
+/// Holds a node in the parse tree for regex
 struct RegexParserNode
 {
+  /// Possible ypes of the node
   enum Type{UNDEF,OR,AND,OPT,MANY,NONZERO,CHAR};
   
+  /// Specifications of the node type
   struct TypeSpecs
   {
+    /// Tag associated to the type
     const char* const tag;
     
+    /// Number of subnodes
     const size_t nSubNodes;
     
+    /// Symbol representing the node
     const char symbol;
   };
   
-  const Type type;
+  /// Type of present node
+  Type type;
   
+  /// Collection of the type specifications in the same order of the enum
   static constexpr TypeSpecs typeSpecs[]={
     {"UNDEF",0,'\0'},
     {"OR",2,'|'},
@@ -28,17 +34,24 @@ struct RegexParserNode
     {"NONZERO",1,'+'},
     {"CHAR",0,'#'}};
   
-  const std::vector<RegexParserNode> subNodes;
+  /// Subnodes of the present node
+  std::vector<RegexParserNode> subNodes;
   
-  const int begChar;
+  /// First char matched by the node
+  char begChar;
   
-  const int endChar;
+  /// Past last char matched by the node
+  char endChar;
   
+  /// Print the current node, and all subnodes iteratively, indenting more and more
   constexpr void printf(const int& indLv=0) const
   {
+    /// String used to indent
     char* ind=new char[indLv+1];
+    
     for(int i=0;i<indLv;i++)
       ind[i]=' ';
+    
     ind[indLv]='\0';
     ::printf("%s %s %c %c\n",ind,typeSpecs[type].tag,begChar,endChar);
     
@@ -48,6 +61,7 @@ struct RegexParserNode
     delete[] ind;
   }
   
+  /// Construct from type, subnodes, beging and past end char
   constexpr RegexParserNode(const Type& type,
 			    std::vector<RegexParserNode>&& subNodes,
 			    const int begChar=0,
@@ -59,6 +73,7 @@ struct RegexParserNode
   {
   }
   
+  /// Node is true if not undefinite
   constexpr operator bool() const
   {
     return type!=UNDEF;
@@ -67,23 +82,26 @@ struct RegexParserNode
 
 /////////////////////////////////////////////////////////////////
 
-constexpr bool matchAllCharsBut(const char* list,
-				const char& c)
+/// Returns true if the char c is not in the terminated string list
+constexpr bool isCharNotInList(const char* list,
+			       const char& c)
 {
-  bool m=c!='\0';
+  /// State whether the character is in the list
+  bool isNot=
+    c!='\0';
   
-  for(const char* li=list;*li!='\0' and m;li++)
-    m&=c!=*li;
+  for(const char* li=list;*li!='\0' and isNot;li++)
+    isNot&=c!=*li;
   
-  return m;
+  return isNot;
 }
 
-/// Matches a specific char
+/// Matches a specific char, advancing the stream
 constexpr bool match(const char*& str,
 		     const char& c)
 {
   const bool m=
-    (*str==c);
+    *str==c;
   
   if(m)
     str++;
@@ -91,17 +109,20 @@ constexpr bool match(const char*& str,
   return m;
 }
 
+/// Match two expressions joined by "|"
+///
+/// Forward declaration
 constexpr RegexParserNode matchAndAddPossiblyOrredExpr(const char*& str);
 
+/// Match two consecurive expressions
 constexpr RegexParserNode matchAndAddSubExpr(const char*& str)
 {
+  /// String to be probed
   const char* probe=
     str;
   
   if(match(probe,'('))
-    if(RegexParserNode s=
-       matchAndAddPossiblyOrredExpr(probe);
-       s)
+    if(RegexParserNode s=matchAndAddPossiblyOrredExpr(probe);s)
       if(match(probe,')'))
 	{
 	  str=probe;
@@ -112,22 +133,14 @@ constexpr RegexParserNode matchAndAddSubExpr(const char*& str)
   return {RegexParserNode::UNDEF,{}};
 }
 
-constexpr RegexParserNode matchAndAddDot(const char*& str)
+/// Match an expression of char type, possibly escaped
+constexpr RegexParserNode matchAndAddPossiblyEscapedChar(const char*& str)
 {
   using enum RegexParserNode::Type;
   
   if(match(str,'.'))
-    return {CHAR,{},0,std::numeric_limits<int>::max()};
-  else
-    return {UNDEF,{}};
-}
-
-constexpr RegexParserNode matchEscapedChar(const char*& str)
-{
-  using enum RegexParserNode::Type;
-  
-  if(const char* tmp=str;
-     match(tmp,'\\') and *tmp!='\0')
+    return {CHAR,{},0,std::numeric_limits<char>::max()};
+  else if(const char* tmp=str;match(tmp,'\\') and *tmp!='\0')
     {
       str+=2;
       printf("escaping: %c\n",*tmp);
@@ -137,109 +150,61 @@ constexpr RegexParserNode matchEscapedChar(const char*& str)
       
       return {CHAR,{},*tmp,*tmp+1};
     }
-  
-  return {UNDEF,{}};
-}
-
-constexpr RegexParserNode matchAndAddCharExpr(const char*& str)
-{
-  using enum RegexParserNode::Type;
-  
-  if(RegexParserNode m=
-     matchAndAddDot(str);
-     m)
-    return m;
-  else if(RegexParserNode m=matchEscapedChar(str);
-	  m)
-    {
-      printf("matched: %c %d-%d\n",m.begChar,m.begChar,m.endChar);
-      return m;
-    }
-  else if(const char c=
-	  *str;
-	  matchAllCharsBut("|*+?()",c))
+  else if(const char c=*str;isCharNotInList("|*+?()",c))
     {
       str++;
       
-      return
-	{CHAR,{},c,c+1};
+      return {CHAR,{},c,c+1};
     }
-  else
-    return
-      {UNDEF,{}};
-}
-
-constexpr RegexParserNode matchAndAddExpr(const char*& str)
-{
-  if(RegexParserNode m=
-     matchAndAddSubExpr(str);
-     m)
-    return m;
-  else
-    return matchAndAddCharExpr(str);
+  
+  return {UNDEF,{}};
 }
 
 constexpr RegexParserNode matchAndAddPossiblyPostfixedExpr(const char*& str)
 {
   using enum RegexParserNode::Type;
   
-  if(RegexParserNode m=
-     matchAndAddExpr(str);
-     m)
+  RegexParserNode m=matchAndAddSubExpr(str);
+  
+  if(not m)
+    m=matchAndAddPossiblyEscapedChar(str);
+  
+  if(m)
     {
       if(match(str,'+'))
-	return
-	  {NONZERO,{std::move(m)}};
+	return {NONZERO,{std::move(m)}};
       else if(match(str,'?'))
-	return
-	  {OPT,{std::move(m)}};
+	return {OPT,{std::move(m)}};
       else if (match(str,'*'))
-	return
-	  {MANY,{std::move(m)}};
-      else
-	return
-	  m;
+	return {MANY,{std::move(m)}};
     }
-  else
-    return {UNDEF,{}};
+  
+  return m;
 }
 
 constexpr RegexParserNode matchAndAddPossiblyAndedExpr(const char*& str)
 {
-  RegexParserNode lhs=
-    matchAndAddPossiblyPostfixedExpr(str);
-  
   using enum RegexParserNode::Type;
   
+  RegexParserNode lhs=matchAndAddPossiblyPostfixedExpr(str);
+  
   if(lhs)
-    {
-      if(RegexParserNode rhs=
-	 matchAndAddPossiblyAndedExpr(str);
-	 rhs)
-	return
-	  {AND,{std::move(lhs),std::move(rhs)}};
-      else
-	return lhs;
-    }
-  else
-    return {UNDEF,{}};
+    if(RegexParserNode rhs=matchAndAddPossiblyAndedExpr(str);rhs)
+      return {AND,{std::move(lhs),std::move(rhs)}};
+  
+  return lhs;
 }
 
 constexpr RegexParserNode matchAndAddPossiblyOrredExpr(const char*& str)
 {
   using enum RegexParserNode::Type;
   
-  if(RegexParserNode lhs=
-    matchAndAddPossiblyAndedExpr(str);
-     lhs)
+  if(RegexParserNode lhs=matchAndAddPossiblyAndedExpr(str);lhs)
     {
       if(match(str,'|'))
 	{
-	  if(RegexParserNode rhs=
-	     matchAndAddPossiblyAndedExpr(str);
-	     rhs)
-	    return
-	      {OR,{std::move(lhs),std::move(rhs)}};
+	  if(RegexParserNode rhs=matchAndAddPossiblyAndedExpr(str);rhs)
+	    return {OR,{std::move(lhs),std::move(rhs)}};
 	  else
 	    return lhs;
 	}
@@ -253,7 +218,8 @@ constexpr RegexParserNode matchAndAddPossiblyOrredExpr(const char*& str)
 constexpr bool test(const char* const str,
 		    const size_t& len=0)
 {
-  const char* probe=str;
+  const char* probe=
+    str;
   
   RegexParserNode t=
     matchAndAddPossiblyOrredExpr(probe);
