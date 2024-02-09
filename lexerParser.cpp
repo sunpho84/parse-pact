@@ -8,28 +8,19 @@ struct Matching
 {
   std::string_view& ref;
   
-  bool accepting;
-  
-  std::string_view match;
-  
   constexpr Matching(std::string_view& in) :
-    ref(in),
-    accepting(true),
-    match(in)
+    ref(in)
   {
   }
   
   constexpr char matchAnyChar()
   {
-    accepting&=
-      (not match.empty());
-    
-    if(accepting)
+    if(not ref.empty())
       {
 	const char c=
-	  match.front();
+	  ref.front();
 	
-	match.remove_prefix(1);
+	ref.remove_prefix(1);
 	
 	return c;
       }
@@ -37,34 +28,30 @@ struct Matching
       return '\0';
   }
   
-  constexpr Matching clone()
-  {
-    return *this;
-  }
-  
   constexpr bool matchChar(const char& c)
   {
-    accepting&=
-      (not match.empty()) and match.starts_with(c);
+    const bool accepting=
+      (not ref.empty()) and ref.starts_with(c);
     
-    const char* p=match.begin();
+    const char* p=
+      ref.begin();
     if(accepting)
-      match.remove_prefix(1);
+      ref.remove_prefix(1);
     
     if(not std::is_constant_evaluated())
-      printf("matchChar(%c) accepting: %d, %s -> %s\n",c,accepting,p,match.begin());
+      printf("matchChar(%c) accepting: %d, %s -> %s\n",c,accepting,p,ref.begin());
     return accepting;
   }
   
   constexpr char matchCharNotIn(const std::string_view& filt)
   {
-    if(accepting&=not match.empty())
-      if(const char c=match.front();accepting&=filt.find_first_of(c)==filt.npos)
+    if(not ref.empty())
+      if(const char c=ref.front();filt.find_first_of(c)==filt.npos)
 	{
-	  match.remove_prefix(1);
+	  ref.remove_prefix(1);
 	  if(not std::is_constant_evaluated())
-	    printf("filt.find_first_of(match.front())==filt.size(): filt=%s match.front()=%c filt.find_first_of(match.front())=%zu filt.size()=%zu %d\n",
-		   filt.begin(),match.front(),filt.find_first_of(match.front()),filt.npos,accepting);
+	    printf("filt.find_first_of(match.front())==filt.size(): filt=%s match.front()=%c filt.find_first_of(match.front())=%zu filt.size()=%zu\n",
+		   filt.begin(),ref.front(),filt.find_first_of(ref.front()),filt.npos);
 	    
 	  return c;
 	}
@@ -72,31 +59,22 @@ struct Matching
     return '\0';
   }
   
-  constexpr Matching(const Matching& oth)=delete;
-  
-  constexpr Matching(Matching& oth) :
-    ref(oth.match),
-    accepting(oth.accepting),
-    match(ref)
-  {
-  }
-  
   constexpr char matchAnyCharIn(const std::string_view& filt)
   {
-    if(accepting&=not match.empty())
+    if(not ref.empty())
       {
 	const size_t pos=
-	  filt.find_first_of(match.front());
+	  filt.find_first_of(ref.front());
 	
 	if(not std::is_constant_evaluated())
 	  printf("ecco %zu\n",pos);
 	
-	if(accepting&=pos!=filt.npos)
+	if(pos!=filt.npos)
 	  {
 	    const char c=
-	      match[pos];
+	      ref[pos];
 	    
-	    match.remove_prefix(1);
+	    ref.remove_prefix(1);
 	    
 	    return c;
 	  }
@@ -105,16 +83,9 @@ struct Matching
     return '\0';
   }
   
-  constexpr ~Matching()
-  {
-    if(accepting and ref.begin()!=match.begin())
-      {
-	if(not std::is_constant_evaluated())
-	  printf("Accepting! %s -> %s\n",ref.begin(),match.begin());
-	
-	ref=match;
-      }
-  }
+  Matching(const Matching&)=delete;
+  
+  Matching()=delete;
 };
 
 
@@ -168,7 +139,10 @@ struct RegexParserNode
       ind[i]=' ';
     
     ind[indLv]='\0';
-    ::printf("%s %s %c %c\n",ind,typeSpecs[type].tag,begChar,endChar);
+    ::printf("%s %s ",ind,typeSpecs[type].tag);
+    if(type==CHAR)
+      ::printf("%c %c",begChar,endChar);
+    ::printf("\n");
     
     for(const auto& subNode : subNodes)
       subNode.printf(indLv+1);
@@ -193,122 +167,120 @@ struct RegexParserNode
 
 /////////////////////////////////////////////////////////////////
 
-/// Matches a specific char, advancing the stream
-constexpr bool match(const char*& str,
-		     const char& c)
-{
-  const bool m=
-    *str==c;
-  
-  if(m)
-    str++;
-  
-  return m;
-}
-
 /// Match two expressions joined by "|"
 ///
 /// Forward declaration
-constexpr std::optional<RegexParserNode> matchAndAddPossiblyOrredExpr(Matching matchIn);
+constexpr std::optional<RegexParserNode> matchAndAddPossiblyOrredExpr(Matching& matchIn);
 
-constexpr std::optional<RegexParserNode> matchSubExpr(Matching match)
+constexpr std::optional<RegexParserNode> matchSubExpr(Matching& matchIn)
 {
-  if(match.matchChar('('))
-    if(std::optional<RegexParserNode> s=matchAndAddPossiblyOrredExpr(match);s and match.matchChar(')'))
+  std::string_view backup=
+    matchIn.ref;
+  
+  if(matchIn.matchChar('('))
+    if(std::optional<RegexParserNode> s=matchAndAddPossiblyOrredExpr(matchIn);s and matchIn.matchChar(')'))
       return s;
+
+  matchIn.ref=backup;
   
   return {};
 }
 
-constexpr std::optional<RegexParserNode> matchDot(Matching probe)
+constexpr std::optional<RegexParserNode> matchDot(Matching& matchIn)
 {
-  if(probe.matchChar('.'))
+  if(matchIn.matchChar('.'))
     return RegexParserNode{RegexParserNode::Type::CHAR,{},0,std::numeric_limits<char>::max()};
-  else
-    return {};
+  
+  return {};
 }
 
 constexpr char maybeEscape(const char& c)
 {
   switch (c)
     {
-    case 'b': return '\b';
-    case 'n': return '\n';
-    case 'f': return '\f';
-    case 'r': return '\r';
-    case 't': return '\t';
+    case 'b':return '\b';
+    case 'n':return '\n';
+    case 'f':return '\f';
+    case 'r':return '\r';
+    case 't':return '\t';
     }
   
   return c;
 }
 
-constexpr std::optional<RegexParserNode> matchEscaped(Matching match)
+constexpr std::optional<RegexParserNode> matchEscaped(Matching& matchIn)
 {
   using enum RegexParserNode::Type;
   
-  if(const char c=match.matchCharNotIn("|*+?()"))
+  if(const char c=matchIn.matchCharNotIn("|*+?()"))
     {
       if(not std::is_constant_evaluated())
-	printf("matched char %c from %s pointing to %s\n",c,match.ref.begin(),match.match.begin());
-      if(const char d=(c=='\\')?maybeEscape(match.clone().matchAnyChar()):c)
+	printf("matched char %c from %s pointing to %s\n",c,matchIn.ref.begin(),matchIn.ref.begin());
+      if(const char d=(c=='\\')?maybeEscape(matchIn.matchAnyChar()):c)
 	{
-	  printf("kkkkk %c %d %s %s\n",d,match.accepting,match.ref.begin(),match.match.begin());
+	  if(not std::is_constant_evaluated())
+	    printf("kkkkk %c %s %s\n",d,matchIn.ref.begin(),matchIn.ref.begin());
 	return RegexParserNode{CHAR,{},d,d+1};
-	}}
+	}
+    }
   return {};
 }
 
-constexpr std::optional<RegexParserNode> matchAndAddPossiblyPostfixedExpr(Matching matchIn)
+constexpr std::optional<RegexParserNode> matchAndAddExprWithPossiblePostfix(Matching& matchIn)
 {
   using enum RegexParserNode::Type;
   
-  std::optional<RegexParserNode> m=
-    matchSubExpr(matchIn);
-  printf("%s %s %d %d\n",__PRETTY_FUNCTION__,matchIn.match.begin(),__LINE__,m.has_value());
-  
-  if(not m)
-    m=matchDot(matchIn);
-  if(not m)
-    m=matchEscaped(matchIn);
+  std::optional<RegexParserNode> m;
+
+  if(not (m=matchSubExpr(matchIn)))
+    if(not (m=matchDot(matchIn)))
+      m=matchEscaped(matchIn);
   
   if(m)
-    if(Matching probe=matchIn.clone();const int c=probe.matchAnyCharIn("+?*"))
+    if(const int c=matchIn.matchAnyCharIn("+?*"))
       m=RegexParserNode{(c=='+')?NONZERO:((c=='?')?OPT:MANY),{std::move(*m)}};
   
-  printf("%s %s %d %d\n",__PRETTY_FUNCTION__,matchIn.match.begin(),__LINE__,m.has_value());
+  if(not std::is_constant_evaluated())
+    printf("%s %s %d %d\n",__PRETTY_FUNCTION__,matchIn.ref.begin(),__LINE__,m.has_value());
   
   return m;
 }
 
-constexpr std::optional<RegexParserNode> matchAndAddPossiblyAndedExpr(Matching match)
+constexpr std::optional<RegexParserNode> matchAndAddPossiblyAndedExpr(Matching& matchIn)
 {
   using enum RegexParserNode::Type;
   
   std::optional<RegexParserNode> lhs=
-    matchAndAddPossiblyPostfixedExpr(match);
+    matchAndAddExprWithPossiblePostfix(matchIn);
   if(not std::is_constant_evaluated())
-    printf("bubba %s\n",match.match.begin());
+    printf("bubba %s\n",matchIn.ref.begin());
   
   if(lhs)
-    if(std::optional<RegexParserNode> rhs=matchAndAddPossiblyAndedExpr(match.clone()))
+    if(std::optional<RegexParserNode> rhs=matchAndAddPossiblyAndedExpr(matchIn))
       return RegexParserNode{AND,{std::move(*lhs),std::move(*rhs)}};
-  printf("buuuuubba %s\n",match.match.begin());
+  if(not std::is_constant_evaluated())
+    printf("buuuuubba %s\n",matchIn.ref.begin());
   
   return lhs;
 }
 
-constexpr std::optional<RegexParserNode> matchAndAddPossiblyOrredExpr(Matching match)
+constexpr std::optional<RegexParserNode> matchAndAddPossiblyOrredExpr(Matching& matchIn)
 {
   using enum RegexParserNode::Type;
   
-  printf("bba %s\n",match.match.begin());
+  if(not std::is_constant_evaluated())
+    printf("bba %s\n",matchIn.ref.begin());
   std::optional<RegexParserNode> lhs=
-    matchAndAddPossiblyAndedExpr(match);
-  printf("buuuuuuuuuubba %s\n",match.match.begin());
+    matchAndAddPossiblyAndedExpr(matchIn);
+  if(not std::is_constant_evaluated())
+    printf("buuuuuuuuuubba %s\n",matchIn.ref.begin());
   
-  if(Matching probe=match.clone();probe.matchChar('|'))
-    if(std::optional<RegexParserNode> rhs=matchAndAddPossiblyAndedExpr(probe))
+  std::string_view backup=matchIn.ref;
+  if(matchIn.matchChar('|'))
+    if(std::optional<RegexParserNode> rhs=matchAndAddPossiblyAndedExpr(matchIn))
       return RegexParserNode{OR,{std::move(*lhs),std::move(*rhs)}};
+  
+  matchIn.ref=backup;
   
   return lhs;
 }
@@ -339,7 +311,7 @@ int main(int narg,char** arg)
   if(narg>1)
     test(arg[1]);
   else
-    const auto i=test("c|d(f?|g)");
+    constexpr auto i=test("c|d(f?|g)");
   
   return 0;
 }
