@@ -4,15 +4,19 @@
 #include <string_view>
 #include <vector>
 
+/// Keep track of what matched
 struct Matching
 {
+  /// Reference to the string view holding the data
   std::string_view& ref;
   
+  /// Construct from a string view
   constexpr Matching(std::string_view& in) :
     ref(in)
   {
   }
   
+  /// Match any char
   constexpr char matchAnyChar()
   {
     if(not ref.empty())
@@ -28,46 +32,39 @@ struct Matching
       return '\0';
   }
   
+  /// Match a single char
   constexpr bool matchChar(const char& c)
   {
     const bool accepting=
       (not ref.empty()) and ref.starts_with(c);
     
-    const char* p=
-      ref.begin();
     if(accepting)
       ref.remove_prefix(1);
-    
-    if(not std::is_constant_evaluated())
-      printf("matchChar(%c) accepting: %d, %s -> %s\n",c,accepting,p,ref.begin());
+	
     return accepting;
   }
   
+  /// Match a char if not in the filt list
   constexpr char matchCharNotIn(const std::string_view& filt)
   {
     if(not ref.empty())
       if(const char c=ref.front();filt.find_first_of(c)==filt.npos)
 	{
 	  ref.remove_prefix(1);
-	  if(not std::is_constant_evaluated())
-	    printf("filt.find_first_of(match.front())==filt.size(): filt=%s match.front()=%c filt.find_first_of(match.front())=%zu filt.size()=%zu\n",
-		   filt.begin(),ref.front(),filt.find_first_of(ref.front()),filt.npos);
-	    
+	  
 	  return c;
 	}
     
     return '\0';
   }
   
+  /// Match a char if it is in the list
   constexpr char matchAnyCharIn(const std::string_view& filt)
   {
     if(not ref.empty())
       {
 	const size_t pos=
 	  filt.find_first_of(ref.front());
-	
-	if(not std::is_constant_evaluated())
-	  printf("ecco %zu\n",pos);
 	
 	if(pos!=filt.npos)
 	  {
@@ -83,11 +80,12 @@ struct Matching
     return '\0';
   }
   
+  /// Forbids taking a copy
   Matching(const Matching&)=delete;
   
+  /// Forbids default construct
   Matching()=delete;
 };
-
 
 /// Holds a node in the parse tree for regex
 struct RegexParserNode
@@ -150,6 +148,7 @@ struct RegexParserNode
     delete[] ind;
   }
   
+  /// Forbids default construct of the node
   RegexParserNode()=delete;
   
   /// Construct from type, subnodes, beging and past end char
@@ -172,8 +171,10 @@ struct RegexParserNode
 /// Forward declaration
 constexpr std::optional<RegexParserNode> matchAndAddPossiblyOrredExpr(Matching& matchIn);
 
+/// Matches a subexpression
 constexpr std::optional<RegexParserNode> matchSubExpr(Matching& matchIn)
 {
+  /// Keep track of the original point in case of needed backup
   std::string_view backup=
     matchIn.ref;
   
@@ -186,6 +187,7 @@ constexpr std::optional<RegexParserNode> matchSubExpr(Matching& matchIn)
   return {};
 }
 
+/// Matches any char
 constexpr std::optional<RegexParserNode> matchDot(Matching& matchIn)
 {
   if(matchIn.matchChar('.'))
@@ -194,6 +196,7 @@ constexpr std::optional<RegexParserNode> matchDot(Matching& matchIn)
   return {};
 }
 
+/// Return the escaped counterpart of the escaped part in a few cases, or the char itself
 constexpr char maybeEscape(const char& c)
 {
   switch (c)
@@ -208,77 +211,62 @@ constexpr char maybeEscape(const char& c)
   return c;
 }
 
-constexpr std::optional<RegexParserNode> matchEscaped(Matching& matchIn)
+/// Match a char including possible escape
+constexpr std::optional<RegexParserNode> matchPossiblyEscapedChar(Matching& matchIn)
 {
-  using enum RegexParserNode::Type;
-  
   if(const char c=matchIn.matchCharNotIn("|*+?()"))
-    {
-      if(not std::is_constant_evaluated())
-	printf("matched char %c from %s pointing to %s\n",c,matchIn.ref.begin(),matchIn.ref.begin());
-      if(const char d=(c=='\\')?maybeEscape(matchIn.matchAnyChar()):c)
-	{
-	  if(not std::is_constant_evaluated())
-	    printf("kkkkk %c %s %s\n",d,matchIn.ref.begin(),matchIn.ref.begin());
-	return RegexParserNode{CHAR,{},d,d+1};
-	}
-    }
+    if(const char d=(c=='\\')?maybeEscape(matchIn.matchAnyChar()):c)
+      return RegexParserNode{RegexParserNode::Type::CHAR,{},d,d+1};
+  
   return {};
 }
 
+/// Match an expression and possible postfix
 constexpr std::optional<RegexParserNode> matchAndAddExprWithPossiblePostfix(Matching& matchIn)
 {
   using enum RegexParserNode::Type;
   
+  /// Result to be returned
   std::optional<RegexParserNode> m;
-
+  
   if(not (m=matchSubExpr(matchIn)))
     if(not (m=matchDot(matchIn)))
-      m=matchEscaped(matchIn);
+      m=matchPossiblyEscapedChar(matchIn);
   
   if(m)
     if(const int c=matchIn.matchAnyCharIn("+?*"))
       m=RegexParserNode{(c=='+')?NONZERO:((c=='?')?OPT:MANY),{std::move(*m)}};
   
-  if(not std::is_constant_evaluated())
-    printf("%s %s %d %d\n",__PRETTY_FUNCTION__,matchIn.ref.begin(),__LINE__,m.has_value());
-  
   return m;
 }
 
+/// Match one or two expressions
 constexpr std::optional<RegexParserNode> matchAndAddPossiblyAndedExpr(Matching& matchIn)
 {
-  using enum RegexParserNode::Type;
-  
+  /// First and possible only subexpression
   std::optional<RegexParserNode> lhs=
     matchAndAddExprWithPossiblePostfix(matchIn);
-  if(not std::is_constant_evaluated())
-    printf("bubba %s\n",matchIn.ref.begin());
   
   if(lhs)
     if(std::optional<RegexParserNode> rhs=matchAndAddPossiblyAndedExpr(matchIn))
-      return RegexParserNode{AND,{std::move(*lhs),std::move(*rhs)}};
-  if(not std::is_constant_evaluated())
-    printf("buuuuubba %s\n",matchIn.ref.begin());
+      return RegexParserNode{RegexParserNode::Type::AND,{std::move(*lhs),std::move(*rhs)}};
   
   return lhs;
 }
 
+/// Match one or two expression, the second is optionally matched
 constexpr std::optional<RegexParserNode> matchAndAddPossiblyOrredExpr(Matching& matchIn)
 {
-  using enum RegexParserNode::Type;
-  
-  if(not std::is_constant_evaluated())
-    printf("bba %s\n",matchIn.ref.begin());
+  /// First and possible only subexpression
   std::optional<RegexParserNode> lhs=
     matchAndAddPossiblyAndedExpr(matchIn);
-  if(not std::is_constant_evaluated())
-    printf("buuuuuuuuuubba %s\n",matchIn.ref.begin());
   
+  /// Keep track of the original point in case of needed backup
   std::string_view backup=matchIn.ref;
+  
   if(matchIn.matchChar('|'))
     if(std::optional<RegexParserNode> rhs=matchAndAddPossiblyAndedExpr(matchIn))
-      return RegexParserNode{OR,{std::move(*lhs),std::move(*rhs)}};
+      return RegexParserNode{RegexParserNode::Type::OR,{std::move(*lhs),std::move(*rhs)}};
   
   matchIn.ref=backup;
   
@@ -289,15 +277,10 @@ constexpr bool test(const char* str)
 {
   std::string_view toParse=str;
   
-  if(not std::is_constant_evaluated())
-    printf("%zu\n",toParse.size());
   Matching match(toParse);
   
   std::optional<RegexParserNode> t=
     matchAndAddPossiblyOrredExpr(match);
-  
-  if(not std::is_constant_evaluated())
-    printf("t: %d, *probe:\n",(bool)t);
   
   //if(t and (probe==str+len or (len==0 and *probe=='\0')))
   if(not std::is_constant_evaluated())
@@ -311,7 +294,7 @@ int main(int narg,char** arg)
   if(narg>1)
     test(arg[1]);
   else
-    constexpr auto i=test("c|d(f?|g)");
+    const auto i=test("c|d(f?|g)");
   
   return 0;
 }
