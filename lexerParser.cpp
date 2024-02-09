@@ -8,10 +8,10 @@
 struct Matching
 {
   /// Reference to the string view holding the data
-  std::string_view& ref;
+  std::string_view ref;
   
   /// Construct from a string view
-  constexpr Matching(std::string_view& in) :
+  constexpr Matching(const std::string_view& in) :
     ref(in)
   {
   }
@@ -91,7 +91,7 @@ struct Matching
 struct RegexParserNode
 {
   /// Possible ypes of the node
-  enum Type{OR,AND,OPT,MANY,NONZERO,CHAR};
+  enum Type{OR,AND,OPT,MANY,NONZERO,CHAR,TOKEN};
   
   /// Specifications of the node type
   struct TypeSpecs
@@ -116,7 +116,8 @@ struct RegexParserNode
     {"OPT",1,'?'},
     {"MANY",1,'?'},
     {"NONZERO",1,'+'},
-    {"CHAR",0,'#'}};
+    {"CHAR",0,'#'},
+    {"TOKEN",0,'@'}};
   
   /// Subnodes of the present node
   std::vector<RegexParserNode> subNodes;
@@ -169,7 +170,7 @@ struct RegexParserNode
 /// Match two expressions joined by "|"
 ///
 /// Forward declaration
-constexpr std::optional<RegexParserNode> matchAndAddPossiblyOrredExpr(Matching& matchIn);
+constexpr std::optional<RegexParserNode> matchAndParsePossiblyOrredExpr(Matching& matchIn);
 
 /// Matches a subexpression
 constexpr std::optional<RegexParserNode> matchSubExpr(Matching& matchIn)
@@ -179,7 +180,7 @@ constexpr std::optional<RegexParserNode> matchSubExpr(Matching& matchIn)
     matchIn.ref;
   
   if(matchIn.matchChar('('))
-    if(std::optional<RegexParserNode> s=matchAndAddPossiblyOrredExpr(matchIn);s and matchIn.matchChar(')'))
+    if(std::optional<RegexParserNode> s=matchAndParsePossiblyOrredExpr(matchIn);s and matchIn.matchChar(')'))
       return s;
 
   matchIn.ref=backup;
@@ -222,7 +223,7 @@ constexpr std::optional<RegexParserNode> matchPossiblyEscapedChar(Matching& matc
 }
 
 /// Match an expression and possible postfix
-constexpr std::optional<RegexParserNode> matchAndAddExprWithPossiblePostfix(Matching& matchIn)
+constexpr std::optional<RegexParserNode> matchAndParseExprWithPossiblePostfix(Matching& matchIn)
 {
   using enum RegexParserNode::Type;
   
@@ -241,31 +242,31 @@ constexpr std::optional<RegexParserNode> matchAndAddExprWithPossiblePostfix(Matc
 }
 
 /// Match one or two expressions
-constexpr std::optional<RegexParserNode> matchAndAddPossiblyAndedExpr(Matching& matchIn)
+constexpr std::optional<RegexParserNode> matchAndParsePossiblyAndedExpr(Matching& matchIn)
 {
   /// First and possible only subexpression
   std::optional<RegexParserNode> lhs=
-    matchAndAddExprWithPossiblePostfix(matchIn);
+    matchAndParseExprWithPossiblePostfix(matchIn);
   
   if(lhs)
-    if(std::optional<RegexParserNode> rhs=matchAndAddPossiblyAndedExpr(matchIn))
+    if(std::optional<RegexParserNode> rhs=matchAndParsePossiblyAndedExpr(matchIn))
       return RegexParserNode{RegexParserNode::Type::AND,{std::move(*lhs),std::move(*rhs)}};
   
   return lhs;
 }
 
 /// Match one or two expression, the second is optionally matched
-constexpr std::optional<RegexParserNode> matchAndAddPossiblyOrredExpr(Matching& matchIn)
+constexpr std::optional<RegexParserNode> matchAndParsePossiblyOrredExpr(Matching& matchIn)
 {
   /// First and possible only subexpression
   std::optional<RegexParserNode> lhs=
-    matchAndAddPossiblyAndedExpr(matchIn);
+    matchAndParsePossiblyAndedExpr(matchIn);
   
   /// Keep track of the original point in case of needed backup
   std::string_view backup=matchIn.ref;
   
   if(matchIn.matchChar('|'))
-    if(std::optional<RegexParserNode> rhs=matchAndAddPossiblyAndedExpr(matchIn))
+    if(std::optional<RegexParserNode> rhs=matchAndParsePossiblyAndedExpr(matchIn))
       return RegexParserNode{RegexParserNode::Type::OR,{std::move(*lhs),std::move(*rhs)}};
   
   matchIn.ref=backup;
@@ -273,28 +274,54 @@ constexpr std::optional<RegexParserNode> matchAndAddPossiblyOrredExpr(Matching& 
   return lhs;
 }
 
-constexpr bool test(const char* str)
+/// Gets the parse tree from many regex
+template <size_t ITok=0,
+	  typename...Tail>
+requires(std::is_same_v<char,Tail> and ...)
+constexpr std::optional<RegexParserNode> parseTreeFromRegex(const char* headRE,
+							    const Tail*...tailRE)
 {
-  std::string_view toParse=str;
+  using enum RegexParserNode::Type;
   
-  Matching match(toParse);
+  if(Matching match(headRE);std::optional<RegexParserNode> t=matchAndParsePossiblyOrredExpr(match))
+    if(t and match.ref.empty())
+      {
+	/// Result if last to be matched
+	RegexParserNode res(AND,{std::move(*t),{TOKEN,{}}});
+	
+	if constexpr(sizeof...(tailRE))
+	  if(std::optional<RegexParserNode> n=*parseTreeFromRegex<ITok+1>(tailRE...))
+	    return RegexParserNode(OR,{std::move(res),std::move(*n)});
+	  else
+	    return {};
+	else
+	  return res;
+      }
   
-  std::optional<RegexParserNode> t=
-    matchAndAddPossiblyOrredExpr(match);
+  return {};
+}
+
+template <typename...T>
+requires(std::is_same_v<char,T> and ...)
+constexpr bool test(const T*...str)
+{
+  std::optional<RegexParserNode> t=parseTreeFromRegex(str...);
   
   //if(t and (probe==str+len or (len==0 and *probe=='\0')))
   if(not std::is_constant_evaluated())
     t->printf();
   
-  return true;
+  return t.has_value();
 }
 
 int main(int narg,char** arg)
 {
+
   if(narg>1)
     test(arg[1]);
   else
-    const auto i=test("c|d(f?|g)");
-  
+    {
+      const bool i=test("c|d(f?|g)","anna");
+      i;}
   return 0;
 }
