@@ -128,6 +128,9 @@ struct RegexParserNode
   /// Past last char matched by the node
   char endChar;
   
+  /// Id of the matched token
+  int tokId;
+  
   /// Print the current node, and all subnodes iteratively, indenting more and more
   constexpr void printf(const int& indLv=0) const
   {
@@ -139,9 +142,17 @@ struct RegexParserNode
     
     ind[indLv]='\0';
     ::printf("%s %s ",ind,typeSpecs[type].tag);
-    if(type==CHAR)
-      ::printf("%c %c",begChar,endChar);
-    ::printf("\n");
+    switch(type)
+      {
+      case(CHAR):
+	::printf("[%c - %c)\n",begChar,endChar);
+	break;
+      case(TOKEN):
+	::printf("tok %d\n",tokId);
+	break;
+      default:
+	::printf("\n");
+      }
     
     for(const auto& subNode : subNodes)
       subNode.printf(indLv+1);
@@ -155,12 +166,14 @@ struct RegexParserNode
   /// Construct from type, subnodes, beging and past end char
   constexpr RegexParserNode(const Type& type,
 			    std::vector<RegexParserNode>&& subNodes,
-			    const int begChar=0,
-			    const int endChar=0) :
+			    const char begChar='\0',
+			    const char endChar='\0',
+			    const int tokId=0) :
     type(type),
     subNodes(subNodes),
     begChar(begChar),
-    endChar(endChar)
+    endChar(endChar),
+    tokId(tokId)
   {
   }
 };
@@ -217,7 +230,7 @@ constexpr std::optional<RegexParserNode> matchPossiblyEscapedChar(Matching& matc
 {
   if(const char c=matchIn.matchCharNotIn("|*+?()"))
     if(const char d=(c=='\\')?maybeEscape(matchIn.matchAnyChar()):c)
-      return RegexParserNode{RegexParserNode::Type::CHAR,{},d,d+1};
+      return RegexParserNode{RegexParserNode::Type::CHAR,{},d,(char)(d+1)};
   
   return {};
 }
@@ -287,7 +300,7 @@ constexpr std::optional<RegexParserNode> parseTreeFromRegex(const char* headRE,
     if(t and match.ref.empty())
       {
 	/// Result if last to be matched
-	RegexParserNode res(AND,{std::move(*t),{TOKEN,{}}});
+	RegexParserNode res(AND,{std::move(*t),{TOKEN,{},'\0','\0',ITok}});
 	
 	if constexpr(sizeof...(tailRE))
 	  if(std::optional<RegexParserNode> n=*parseTreeFromRegex<ITok+1>(tailRE...))
@@ -308,7 +321,7 @@ constexpr bool test(const T*...str)
   std::optional<RegexParserNode> t=parseTreeFromRegex(str...);
   
   //if(t and (probe==str+len or (len==0 and *probe=='\0')))
-  if(not std::is_constant_evaluated())
+  // if(not std::is_constant_evaluated())
     t->printf();
   
   return t.has_value();

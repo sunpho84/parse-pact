@@ -185,7 +185,7 @@ following rules:
 
 * Action nodes
   * **nullable** never
-  * **first** contains only the node itself
+  * **firsts** contains only the node itself
   * **lasts** contains only the node itself.
 
 #### Follows 
