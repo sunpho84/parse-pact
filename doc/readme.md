@@ -191,8 +191,8 @@ following rules:
 #### Follows 
 
 Then, the "follow" positions (follows) are determined. This is done by
-computing the follows of the subnodesiteratively. When follows of
-subnodes are computed, the follows of the give node are
+computing the follows of the subnodes iteratively. When follows of
+subnodes are computed, the follows of the given node are
 determined. One considers only "And", "Star" and "Optional" nodes. The
 aim is to close the wire and connect the plausbile paths along the
 tree:

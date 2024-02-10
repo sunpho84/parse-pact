@@ -1,3 +1,4 @@
+#include <cctype>
 #include <cstdio>
 #include <limits>
 #include <optional>
@@ -131,6 +132,21 @@ struct RegexParserNode
   /// Id of the matched token
   int tokId;
   
+  /// Id of the node
+  size_t id;
+  
+  /// Determine if the node is nullable
+  bool nullable;
+  
+  /// Determine the first elements of the subtree that must match something
+  std::vector<RegexParserNode*> firsts;
+  
+  /// Determine the last elements of the subtree that must match something
+  std::vector<RegexParserNode*> lasts;
+  
+  /// Determine the following elements
+  std::vector<RegexParserNode*> follows;
+  
   /// Print the current node, and all subnodes iteratively, indenting more and more
   constexpr void printf(const int& indLv=0) const
   {
@@ -141,11 +157,24 @@ struct RegexParserNode
       ind[i]=' ';
     
     ind[indLv]='\0';
-    ::printf("%s %s ",ind,typeSpecs[type].tag);
+    ::printf("%s %s, id: %zu, ",ind,typeSpecs[type].tag,id);
+    if(nullable)
+      ::printf("nullable ");
+    for(const auto& [tag,vec] : {std::make_pair("firsts",firsts),{"lasts",lasts},{"follows",follows}})
+      {
+	::printf("%s: {",tag);
+	for(size_t i=0;const auto& v : vec)
+	  ::printf("%s%zu",(i++==0)?"":",",v->id);
+	::printf("}, ");
+      }
     switch(type)
       {
       case(CHAR):
-	::printf("[%c - %c)\n",begChar,endChar);
+	::printf("[%d - %d) = {",begChar,endChar);
+	for(char b=begChar;b<endChar;b++)
+	  if(std::isalnum(b))
+	    ::printf("%c",b);
+	::printf("}\n");
 	break;
       case(TOKEN):
 	::printf("tok %d\n",tokId);
@@ -158,6 +187,97 @@ struct RegexParserNode
       subNode.printf(indLv+1);
     
     delete[] ind;
+  }
+  
+  /// Sets the id of the node
+  constexpr void setId(size_t& id)
+  {
+    for(auto& subNode : subNodes)
+      subNode.setId(id);
+    
+    this->id=id++;
+  }
+  
+  /// Set whethere the node can be skipped
+  constexpr void setNullable()
+  {
+    for(auto& subNode : subNodes)
+      subNode.setNullable();
+    
+    switch(type)
+      {
+      case OR:
+	nullable=subNodes[0].nullable or subNodes[1].nullable;
+	break;
+      case AND:
+	nullable=subNodes[0].nullable and subNodes[1].nullable;
+	break;
+      case OPT:
+	nullable=true;
+	break;
+      case MANY:
+	nullable=true;
+	break;
+      case NONZERO:
+	nullable=subNodes[0].nullable;
+	break;
+      case CHAR:
+	nullable=endChar==begChar;
+	break;
+      case TOKEN:
+	nullable=false;
+      break;
+    }
+  }
+  
+  /// Set the first and the last nodes of the subtree which must match something
+  constexpr void setFirstsLasts()
+  {
+    for(auto& subNode : subNodes)
+      subNode.setFirstsLasts();
+    
+    switch(type)
+      {
+      case OR:
+	firsts.reserve(subNodes[0].firsts.size()+subNodes[1].firsts.size());
+	lasts.reserve(subNodes[0].lasts.size()+subNodes[1].lasts.size());
+	for(const auto& subNode : subNodes)
+	  {
+	    firsts.insert(firsts.end(),subNode.firsts.begin(),subNode.firsts.end());
+	    lasts.insert(lasts.end(),subNode.lasts.begin(),subNode.lasts.end());
+	  }
+	break;
+      case AND:
+	firsts=subNodes[0].nullable?subNodes[1].firsts:subNodes[0].firsts;
+	lasts=subNodes[1].nullable?subNodes[0].lasts:subNodes[1].lasts;
+	break;
+      case OPT:
+      case MANY:
+      case NONZERO:
+	firsts=subNodes[0].firsts;
+	lasts=subNodes[0].lasts;
+	break;
+      case CHAR:
+      case TOKEN:
+	firsts.push_back(this);
+	lasts.push_back(this);
+      break;
+    }
+  }
+  
+  /// Set the possible following node
+  constexpr void setFollows()
+  {
+    for(auto& subNode : subNodes)
+      subNode.setFollows();
+    
+    if(type==AND)
+      for(auto& l0 : subNodes[0].lasts)
+	l0->follows.insert(l0->follows.end(),subNodes[1].firsts.begin(),subNodes[1].firsts.end());
+    else if (type==MANY or type==NONZERO)
+      for(auto& l0 : subNodes[0].lasts)
+	if(l0->type==CHAR or l0->type==TOKEN)
+	  l0->follows.insert(l0->follows.end(),firsts.begin(),firsts.end());
   }
   
   /// Forbids default construct of the node
@@ -173,7 +293,9 @@ struct RegexParserNode
     subNodes(subNodes),
     begChar(begChar),
     endChar(endChar),
-    tokId(tokId)
+    tokId(tokId),
+    id{0},
+    nullable(false)
   {
   }
 };
@@ -319,6 +441,11 @@ requires(std::is_same_v<char,T> and ...)
 constexpr bool test(const T*...str)
 {
   std::optional<RegexParserNode> t=parseTreeFromRegex(str...);
+  size_t nSubNodes=0;
+  t->setId(nSubNodes);
+  t->setNullable();
+  t->setFirstsLasts();
+  t->setFollows();
   
   //if(t and (probe==str+len or (len==0 and *probe=='\0')))
   // if(not std::is_constant_evaluated())
