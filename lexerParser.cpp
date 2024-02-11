@@ -70,7 +70,7 @@ struct Matching
 	if(pos!=filt.npos)
 	  {
 	    const char c=
-	      ref[pos];
+	      filt[pos];
 	    
 	    ref.remove_prefix(1);
 	    
@@ -115,7 +115,7 @@ struct RegexParserNode
     {"OR",2,'|'},
     {"AND",2,'&'},
     {"OPT",1,'?'},
-    {"MANY",1,'?'},
+    {"MANY",1,'*'},
     {"NONZERO",1,'+'},
     {"CHAR",0,'#'},
     {"TOKEN",0,'@'}};
@@ -370,7 +370,7 @@ constexpr std::optional<RegexParserNode> matchAndParseExprWithPossiblePostfix(Ma
       m=matchPossiblyEscapedChar(matchIn);
   
   if(m)
-    if(const int c=matchIn.matchAnyCharIn("+?*"))
+    if(const char c=matchIn.matchAnyCharIn("+?*"))
       m=RegexParserNode{(c=='+')?NONZERO:((c=='?')?OPT:MANY),{std::move(*m)}};
   
   return m;
@@ -449,7 +449,81 @@ constexpr bool test(const T*...str)
   
   //if(t and (probe==str+len or (len==0 and *probe=='\0')))
   // if(not std::is_constant_evaluated())
-    t->printf();
+  t->printf();
+  
+  using DState=
+    std::vector<RegexParserNode*>;
+  
+  std::vector<DState> dStates=
+    {t->firsts};
+  
+  for(size_t iDState=0;iDState<dStates.size();iDState++)
+    {
+      /**
+	 
+	 
+	 
+       */
+
+      
+      using RangeDel=
+	std::pair<char,bool>;
+      
+      std::vector<RangeDel> rangeDels;
+      
+      for(const auto& f : dStates[iDState])
+	{
+	  auto cur=
+	    rangeDels.begin();
+	  
+	  bool startNewRange=
+	    false;
+	  
+	  const char& b=
+	    f->begChar;
+	  
+	  const char &e=
+	    f->endChar;
+	  
+	  while(cur!=rangeDels.end() and cur->first<b)
+	    startNewRange=(cur++)->second;
+	  
+	  if(cur==rangeDels.end() or cur->first!=b)
+	    cur=rangeDels.insert(cur,{b,true})+1;
+	  
+	  while(cur!=rangeDels.end() and cur->first<e)
+	    {
+	      startNewRange=cur->second;
+	      cur++->second=true;
+	    }
+	  
+	  if(cur==rangeDels.end() or cur->first!=e)
+	    rangeDels.insert(cur,{e,startNewRange});
+	}
+      
+      printf("dState: {");
+      for(size_t i=0;const auto& n : dStates[iDState])
+	printf("%s%zu",(i++==0)?"":",",n->id);
+      printf("}\n");
+      for(auto rangeBeg=rangeDels.begin();rangeBeg+1<rangeDels.end();rangeBeg++)
+	{
+	  const char& b=rangeBeg->first;
+	  const char& e=(rangeBeg+1)->first;
+	  
+	  DState next;
+	  for(const auto& f : dStates[iDState])
+	    if(b>=f->begChar and e<=f->endChar)
+	      next.push_back(f);
+	  
+	  printf(" range [%c - %c) goes to state {",b,e);
+	  for(size_t i=0;const auto& n : next)
+	    printf("%s%zu",(i++==0)?"":",",n->id);
+	  printf("}\n");
+	  
+	  if(not (rangeBeg+1)->second)
+	    rangeBeg++;
+	}
+    }
   
   return t.has_value();
 }
