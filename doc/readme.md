@@ -158,9 +158,9 @@ following rules:
   
 * "And" node
   * **nullable** if both subnodes are nullable
-  * **firsts** is the firsts of the first subnodes, or of the second if
+  * **firsts** is the firsts of the first subnodes, and of the second if
     the first subnode is nullable
-  * **lasts**  is the lasts of the second subnodes, or of the first if
+  * **lasts**  is the lasts of the second subnodes, and of the first if
     the second subnode is nullable
 
 * "Or" node

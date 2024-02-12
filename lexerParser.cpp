@@ -1,9 +1,14 @@
+#include <array>
 #include <cctype>
 #include <cstdio>
 #include <limits>
 #include <optional>
 #include <string_view>
 #include <vector>
+
+void errorEmitter(const char*)
+{
+}
 
 /// Keep track of what matched
 struct Matching
@@ -190,12 +195,22 @@ struct RegexParserNode
   }
   
   /// Sets the id of the node
-  constexpr void setId(size_t& id)
+  constexpr void setRecursivelyId(size_t& id)
   {
     for(auto& subNode : subNodes)
-      subNode.setId(id);
+      subNode.setRecursivelyId(id);
     
     this->id=id++;
+  }
+  
+  /// Sets the id of all the nodes
+  constexpr size_t setAllIds()
+  {
+    size_t iD=0;
+    
+    setRecursivelyId(iD);
+    
+    return iD;
   }
   
   /// Set whethere the node can be skipped
@@ -225,7 +240,7 @@ struct RegexParserNode
 	nullable=endChar==begChar;
 	break;
       case TOKEN:
-	nullable=false;
+	nullable=true;
       break;
     }
   }
@@ -239,8 +254,6 @@ struct RegexParserNode
     switch(type)
       {
       case OR:
-	firsts.reserve(subNodes[0].firsts.size()+subNodes[1].firsts.size());
-	lasts.reserve(subNodes[0].lasts.size()+subNodes[1].lasts.size());
 	for(const auto& subNode : subNodes)
 	  {
 	    firsts.insert(firsts.end(),subNode.firsts.begin(),subNode.firsts.end());
@@ -248,8 +261,12 @@ struct RegexParserNode
 	  }
 	break;
       case AND:
-	firsts=subNodes[0].nullable?subNodes[1].firsts:subNodes[0].firsts;
-	lasts=subNodes[1].nullable?subNodes[0].lasts:subNodes[1].lasts;
+	firsts=subNodes[0].firsts;
+	if(subNodes[0].nullable)
+	  firsts.insert(firsts.cend(),subNodes[1].firsts.begin(),subNodes[1].firsts.end());
+	lasts=subNodes[1].lasts;
+	if(subNodes[1].nullable)
+	  lasts.insert(lasts.end(),subNodes[0].lasts.begin(),subNodes[0].lasts.end());
 	break;
       case OPT:
       case MANY:
@@ -327,7 +344,7 @@ constexpr std::optional<RegexParserNode> matchSubExpr(Matching& matchIn)
 constexpr std::optional<RegexParserNode> matchDot(Matching& matchIn)
 {
   if(matchIn.matchChar('.'))
-    return RegexParserNode{RegexParserNode::Type::CHAR,{},0,std::numeric_limits<char>::max()};
+    return RegexParserNode{RegexParserNode::Type::CHAR,{},1,std::numeric_limits<char>::max()};
   
   return {};
 }
@@ -425,7 +442,7 @@ constexpr std::optional<RegexParserNode> parseTreeFromRegex(const char* headRE,
 	RegexParserNode res(AND,{std::move(*t),{TOKEN,{},'\0','\0',ITok}});
 	
 	if constexpr(sizeof...(tailRE))
-	  if(std::optional<RegexParserNode> n=*parseTreeFromRegex<ITok+1>(tailRE...))
+	  if(std::optional<RegexParserNode> n=parseTreeFromRegex<ITok+1>(tailRE...))
 	    return RegexParserNode(OR,{std::move(res),std::move(*n)});
 	  else
 	    return {};
@@ -436,36 +453,124 @@ constexpr std::optional<RegexParserNode> parseTreeFromRegex(const char* headRE,
   return {};
 }
 
-template <typename...T>
-requires(std::is_same_v<char,T> and ...)
-constexpr bool test(const T*...str)
+struct Transition
 {
-  std::optional<RegexParserNode> t=parseTreeFromRegex(str...);
-  size_t nSubNodes=0;
-  t->setId(nSubNodes);
-  t->setNullable();
-  t->setFirstsLasts();
-  t->setFollows();
+  size_t iDStateFrom;
+  
+  char beg;
+  
+  char end;
+  
+  size_t next;
+  
+  constexpr void printf() const
+  {
+    ::printf(" stateFrom: %zu, [%c-%c), dState: %zu\n",iDStateFrom,beg,end,next);
+  }
+};
+
+struct DStateSpec
+{
+  size_t offset;
+  
+  bool accepting;
+  
+  size_t iToken;
+};
+
+struct RegexParserSpecs
+{
+  const size_t nDStates;
+  
+  const size_t nTranstitions;
+  
+  constexpr bool isNull() const
+  {
+    return nDStates==0 and nTranstitions==0;
+  }
+};
+
+template <RegexParserSpecs Specs>
+struct RegexParser
+{
+  std::array<DStateSpec,Specs.nDStates> dStateSpecs;
+  
+  std::array<Transition,Specs.nTranstitions> transitions;
+  
+  constexpr RegexParser(const std::vector<DStateSpec>& dStateSpecs,
+			const std::vector<Transition>& transitions)
+  {
+    for(size_t i=0;i<Specs.nDStates;i++)
+      this->dStateSpecs[i]=dStateSpecs[i];
+    for(size_t i=0;i<Specs.nTranstitions;i++)
+      this->transitions[i]=transitions[i];
+  }
+  
+  constexpr std::optional<size_t> parse(std::string_view v) const
+  {
+    size_t i=0;
+    
+    while(i<Specs.nDStates)
+      {
+	if(not std::is_constant_evaluated())
+	  printf("%zu\n",i);
+	const char& c=
+	  v.empty()?'\0':v.front();
+	
+	auto trans=transitions.begin()+dStateSpecs[i].offset;
+	while(trans!=transitions.end() and trans->iDStateFrom==i and not((trans->beg<=c and trans->end>c)))
+	  trans++;
+	
+	if(trans!=transitions.end() and trans->iDStateFrom==i)
+	  {
+	    if(not std::is_constant_evaluated())
+	      printf("matched %c with trans %zu %c - %c\n",c,trans->iDStateFrom,trans->beg,trans->end);
+	    i=trans->next;
+	    v.remove_prefix(1);
+	  }
+	else
+	  if(dStateSpecs[i].accepting)
+	    return {dStateSpecs[i].iToken};
+	  else
+	    i=Specs.nDStates;
+      }
+    
+    return {};
+  }
+};
+
+/// Create parser from regexp
+template <RegexParserSpecs RPS=RegexParserSpecs{},
+	  typename...T>
+requires(std::is_same_v<char,T> and ...)
+constexpr auto createParserFromRegex(const T*...str)
+{
+  std::optional<RegexParserNode> parseTree=
+    parseTreeFromRegex(str...);
+  
+  parseTree->setAllIds();
+  parseTree->setNullable();
+  parseTree->setFirstsLasts();
+  parseTree->setFollows();
+  
+  /////////////////////////////////////////////////////////////////
   
   //if(t and (probe==str+len or (len==0 and *probe=='\0')))
-  // if(not std::is_constant_evaluated())
-  t->printf();
+  if(not std::is_constant_evaluated())
+    parseTree->printf();
   
   using DState=
     std::vector<RegexParserNode*>;
   
   std::vector<DState> dStates=
-    {t->firsts};
+    {parseTree->firsts};
+  
+  std::vector<std::pair<size_t,size_t>> acceptingDStates;
+  
+  std::vector<Transition> transitions;
   
   for(size_t iDState=0;iDState<dStates.size();iDState++)
     {
-      /**
-	 
-	 
-	 
-       */
-
-      
       using RangeDel=
 	std::pair<char,bool>;
       
@@ -501,41 +606,133 @@ constexpr bool test(const T*...str)
 	    rangeDels.insert(cur,{e,startNewRange});
 	}
       
-      printf("dState: {");
-      for(size_t i=0;const auto& n : dStates[iDState])
-	printf("%s%zu",(i++==0)?"":",",n->id);
-      printf("}\n");
-      for(auto rangeBeg=rangeDels.begin();rangeBeg+1<rangeDels.end();rangeBeg++)
+      if(not std::is_constant_evaluated())
 	{
-	  const char& b=rangeBeg->first;
-	  const char& e=(rangeBeg+1)->first;
-	  
-	  DState next;
-	  for(const auto& f : dStates[iDState])
-	    if(b>=f->begChar and e<=f->endChar)
-	      next.push_back(f);
-	  
-	  printf(" range [%c - %c) goes to state {",b,e);
-	  for(size_t i=0;const auto& n : next)
+	  printf("dState: {");
+	  for(size_t i=0;const auto& n : dStates[iDState])
 	    printf("%s%zu",(i++==0)?"":",",n->id);
 	  printf("}\n");
+	}
+      
+      for(size_t iRangeBeg=0;iRangeBeg+1<rangeDels.size();iRangeBeg++)
+	{
+	  const char& b=rangeDels[iRangeBeg].first;
+	  const char& e=rangeDels[iRangeBeg+1].first;
 	  
-	  if(not (rangeBeg+1)->second)
-	    rangeBeg++;
+	  DState nextDState;
+	  std::vector<int> recogTokens;
+	  for(const auto& f : dStates[iDState])
+	    {
+	      if(b>=f->begChar and e<=f->endChar)
+		nextDState.insert(nextDState.end(),f->follows.begin(),f->follows.end());
+	      if(f->type==RegexParserNode::TOKEN)
+		recogTokens.push_back(f->tokId);
+	    }
+	  
+	  if(not rangeDels[iRangeBeg+1].second)
+	    iRangeBeg++;
+	  
+	  constexpr auto dStateDiffers=
+		      [](const auto& a,
+			 const auto& b)
+		      {
+			bool d=a.size()!=b.size();
+			for(size_t i=0;i<a.size() and not d;i++)
+			  d|=a[i]!=b[i];
+			return d;
+		      };
+	  
+	  size_t iNextDState=0;
+	  while(iNextDState<dStates.size() and dStateDiffers(dStates[iNextDState],nextDState))
+	    {
+	      // if(not std::is_constant_evaluated())
+	      // 	{
+	      // 	  printf("a: ");
+	      // for(const auto& f : dStates[iNextDState])
+	      // 	printf("%p ",f);
+	      // printf(", b: ");
+	      // for(const auto& f : nextDState)
+	      // 	printf("%p ",f);
+	      // printf("\n");
+	      // 	}
+	      iNextDState++;
+	    }
+	  
+	  if(not std::is_constant_evaluated())
+	    {
+	      printf(" range [%c - %c) goes to state {",b,e);
+	      for(size_t i=0;const auto& n : nextDState)
+		printf("%s%zu",(i++==0)?"":",",n->id);
+	      printf("}, %zu\n",iNextDState);
+	    }
+	  
+	  if(iNextDState==dStates.size() and nextDState.size())
+	    dStates.push_back(nextDState);
+	  
+	  // if(recogTokens.size()>1)
+	  //   errorEmitter("multiple token recognized");
+	  
+	  // if(recogTokens.size()==1 and (b!=e))
+	  //   errorEmitter("token recognize when chars accepted");
+	  
+	  if(recogTokens.size()==0 and (b==e))
+	    errorEmitter("token not recognized when chars not accepted");
+	  
+	  if(recogTokens.size())
+	    acceptingDStates.emplace_back(iDState,recogTokens.front());
+	  
+	  transitions.push_back({iDState,b,e,(b==e)?recogTokens.front():iNextDState});
 	}
     }
   
-  return t.has_value();
+  std::vector<DStateSpec> dStateSpecs(dStates.size()+1,DStateSpec{.accepting=false,.iToken=0});
+  
+  for(const auto& [iDState,b,e,iNext] : transitions)
+    dStateSpecs[iDState+1].offset++;
+  for(size_t iDState=1;iDState<dStates.size();iDState++)
+    dStateSpecs[iDState].offset+=dStateSpecs[iDState-1].offset;
+  
+  for(const auto& [iDState,iToken] : acceptingDStates)
+    {
+      dStateSpecs[iDState].accepting=true;
+      dStateSpecs[iDState].iToken=iToken;
+    }
+  
+  if(not std::is_constant_evaluated())
+    for(size_t iDState=0;iDState<dStates.size();iDState++)
+      {
+	printf("dState %zu {",iDState);
+	for(size_t i=0;const auto& n : dStates[iDState])
+	  printf("%s%zu",(i++==0)?"":",",n->id);
+	printf("} has the following transitions: \n");
+	
+	for(size_t iTransition=dStateSpecs[iDState].offset;iTransition<transitions.size() and transitions[iTransition].iDStateFrom==iDState;iTransition++)
+	  transitions[iTransition].printf();
+	
+	if(dStateSpecs[iDState].accepting)
+	  printf(" accepting token %zu\n",dStateSpecs[iDState].iToken);
+      }
+  
+  if constexpr(RPS.isNull())
+    return RegexParserSpecs{.nDStates=dStates.size(),.nTranstitions=transitions.size()};
+  else
+    return RegexParser<RPS>(dStateSpecs,transitions);
 }
 
 int main(int narg,char** arg)
 {
-
   if(narg>1)
-    test(arg[1]);
+    createParserFromRegex(arg[1]);
   else
     {
-      const bool i=test("c|d(f?|g)","anna");
-      i;}
+      constexpr auto specs=createParserFromRegex("c|d(f?|g)","anna",".*");
+      const auto parser=createParserFromRegex<specs>("c|d(f?|g)","anna",".*");
+      if(const auto oi=parser.parse("ann"))
+	printf("parsed: %zu\n",*oi);
+      
+      // printf("NTransitions: %zu\n",parser.transitions.size());
+      // for(const auto& t : parser.transitions)
+      // 	t.printf();
+    }//i.nTranstitions;}
   return 0;
 }
