@@ -340,7 +340,7 @@ constexpr std::optional<RegexParserNode> matchSubExpr(Matching& matchIn)
   return {};
 }
 
-/// Matches any char
+/// Matches any char but '\0'
 constexpr std::optional<RegexParserNode> matchDot(Matching& matchIn)
 {
   if(matchIn.matchChar('.'))
@@ -426,7 +426,7 @@ constexpr std::optional<RegexParserNode> matchAndParsePossiblyOrredExpr(Matching
   return lhs;
 }
 
-/// Gets the parse tree from many regex
+/// Gets the parse tree from a list of regex
 template <size_t ITok=0,
 	  typename...Tail>
 requires(std::is_same_v<char,Tail> and ...)
@@ -438,7 +438,7 @@ constexpr std::optional<RegexParserNode> parseTreeFromRegex(const char* headRE,
   if(Matching match(headRE);std::optional<RegexParserNode> t=matchAndParsePossiblyOrredExpr(match))
     if(t and match.ref.empty())
       {
-	/// Result if last to be matched
+	/// Result, to be returned if last to be matched
 	RegexParserNode res(AND,{std::move(*t),{TOKEN,{},'\0','\0',ITok}});
 	
 	if constexpr(sizeof...(tailRE))
@@ -453,86 +453,100 @@ constexpr std::optional<RegexParserNode> parseTreeFromRegex(const char* headRE,
   return {};
 }
 
-struct Transition
+/// Transition in the state machine for the regex parsing
+struct RegexMachineTransition
 {
+  /// State from which to move
   size_t iDStateFrom;
   
+  /// First matching char
   char beg;
   
+  /// End char
   char end;
   
-  size_t next;
+  /// Next state
+  size_t nextDState;
   
-  constexpr void printf() const
+  /// Print the transition
+ void printf() const
   {
-    ::printf(" stateFrom: %zu, [%c-%c), dState: %zu\n",iDStateFrom,beg,end,next);
+    ::printf(" stateFrom: %zu, [%c-%c), dState: %zu\n",iDStateFrom,beg,end,nextDState);
   }
 };
 
-struct DStateSpec
+/// Specifications for the DState
+struct DState
 {
-  size_t offset;
+  /// Index of the first transition for the given state
+  size_t transitionsBegin;
   
+  /// Determine whether this state accepts for a certain token
   bool accepting;
   
+  /// Index of the possible token matched by the state
   size_t iToken;
 };
 
-struct RegexParserSpecs
+/// Specifications of the machine
+struct RegexMachineSpecs
 {
+  /// Number of dStates
   const size_t nDStates;
   
+  /// Number of transitions
   const size_t nTranstitions;
   
+  /// Detects if the machine is empty
   constexpr bool isNull() const
   {
     return nDStates==0 and nTranstitions==0;
   }
 };
 
-template <RegexParserSpecs Specs>
-struct RegexParser
+template <RegexMachineSpecs Specs>
+struct ConstexprRegexParser
 {
-  std::array<DStateSpec,Specs.nDStates> dStateSpecs;
+  std::array<DState,Specs.nDStates> dStates;
   
-  std::array<Transition,Specs.nTranstitions> transitions;
+  std::array<RegexMachineTransition,Specs.nTranstitions> transitions;
   
-  constexpr RegexParser(const std::vector<DStateSpec>& dStateSpecs,
-			const std::vector<Transition>& transitions)
+  constexpr ConstexprRegexParser(const std::vector<DState>& dStateSpecs,
+			const std::vector<RegexMachineTransition>& transitions)
   {
     for(size_t i=0;i<Specs.nDStates;i++)
-      this->dStateSpecs[i]=dStateSpecs[i];
+      this->dStates[i]=dStateSpecs[i];
     for(size_t i=0;i<Specs.nTranstitions;i++)
       this->transitions[i]=transitions[i];
   }
   
   constexpr std::optional<size_t> parse(std::string_view v) const
   {
-    size_t i=0;
+    size_t dState=0;
     
-    while(i<Specs.nDStates)
+    while(dState<dStates.size())
       {
 	if(not std::is_constant_evaluated())
-	  printf("%zu\n",i);
+	  printf("%zu\n",dState);
 	const char& c=
 	  v.empty()?'\0':v.front();
 	
-	auto trans=transitions.begin()+dStateSpecs[i].offset;
-	while(trans!=transitions.end() and trans->iDStateFrom==i and not((trans->beg<=c and trans->end>c)))
+	auto trans=transitions.begin()+dStates[dState].transitionsBegin;
+	while(trans!=transitions.end() and trans->iDStateFrom==dState and not((trans->beg<=c and trans->end>c)))
 	  trans++;
 	
-	if(trans!=transitions.end() and trans->iDStateFrom==i)
+	if(trans!=transitions.end() and trans->iDStateFrom==dState)
 	  {
 	    if(not std::is_constant_evaluated())
 	      printf("matched %c with trans %zu %c - %c\n",c,trans->iDStateFrom,trans->beg,trans->end);
-	    i=trans->next;
+	    dState=trans->nextDState;
 	    v.remove_prefix(1);
 	  }
 	else
-	  if(dStateSpecs[i].accepting)
-	    return {dStateSpecs[i].iToken};
+	  if(dStates[dState].accepting)
+	    return {dStates[dState].iToken};
 	  else
-	    i=Specs.nDStates;
+	    dState=dStates.size();
       }
     
     return {};
@@ -540,7 +554,7 @@ struct RegexParser
 };
 
 /// Create parser from regexp
-template <RegexParserSpecs RPS=RegexParserSpecs{},
+template <RegexMachineSpecs RPS=RegexMachineSpecs{},
 	  typename...T>
 requires(std::is_same_v<char,T> and ...)
 constexpr auto createParserFromRegex(const T*...str)
@@ -559,15 +573,15 @@ constexpr auto createParserFromRegex(const T*...str)
   if(not std::is_constant_evaluated())
     parseTree->printf();
   
-  using DState=
+  using DStateStates=
     std::vector<RegexParserNode*>;
   
-  std::vector<DState> dStates=
+  std::vector<DStateStates> dStates=
     {parseTree->firsts};
   
   std::vector<std::pair<size_t,size_t>> acceptingDStates;
   
-  std::vector<Transition> transitions;
+  std::vector<RegexMachineTransition> transitions;
   
   for(size_t iDState=0;iDState<dStates.size();iDState++)
     {
@@ -619,7 +633,7 @@ constexpr auto createParserFromRegex(const T*...str)
 	  const char& b=rangeDels[iRangeBeg].first;
 	  const char& e=rangeDels[iRangeBeg+1].first;
 	  
-	  DState nextDState;
+	  DStateStates nextDState;
 	  std::vector<int> recogTokens;
 	  for(const auto& f : dStates[iDState])
 	    {
@@ -685,12 +699,12 @@ constexpr auto createParserFromRegex(const T*...str)
 	}
     }
   
-  std::vector<DStateSpec> dStateSpecs(dStates.size()+1,DStateSpec{.accepting=false,.iToken=0});
+  std::vector<DState> dStateSpecs(dStates.size()+1,DState{.accepting=false,.iToken=0});
   
   for(const auto& [iDState,b,e,iNext] : transitions)
-    dStateSpecs[iDState+1].offset++;
+    dStateSpecs[iDState+1].transitionsBegin++;
   for(size_t iDState=1;iDState<dStates.size();iDState++)
-    dStateSpecs[iDState].offset+=dStateSpecs[iDState-1].offset;
+    dStateSpecs[iDState].transitionsBegin+=dStateSpecs[iDState-1].transitionsBegin;
   
   for(const auto& [iDState,iToken] : acceptingDStates)
     {
@@ -706,7 +720,7 @@ constexpr auto createParserFromRegex(const T*...str)
 	  printf("%s%zu",(i++==0)?"":",",n->id);
 	printf("} has the following transitions: \n");
 	
-	for(size_t iTransition=dStateSpecs[iDState].offset;iTransition<transitions.size() and transitions[iTransition].iDStateFrom==iDState;iTransition++)
+	for(size_t iTransition=dStateSpecs[iDState].transitionsBegin;iTransition<transitions.size() and transitions[iTransition].iDStateFrom==iDState;iTransition++)
 	  transitions[iTransition].printf();
 	
 	if(dStateSpecs[iDState].accepting)
@@ -714,25 +728,24 @@ constexpr auto createParserFromRegex(const T*...str)
       }
   
   if constexpr(RPS.isNull())
-    return RegexParserSpecs{.nDStates=dStates.size(),.nTranstitions=transitions.size()};
+    return RegexMachineSpecs{.nDStates=dStates.size(),.nTranstitions=transitions.size()};
   else
-    return RegexParser<RPS>(dStateSpecs,transitions);
+    return ConstexprRegexParser<RPS>(dStateSpecs,transitions);
+}
+
+constexpr size_t test()
+{
+  constexpr auto specs=createParserFromRegex("c|d(f?|g)","anna",".*");
+  constexpr auto parser=createParserFromRegex<specs>("c|d(f?|g)","anna",".*");
+  if(constexpr auto oi=parser.parse("ann"))
+    return *oi;
+  else
+    return -1;
 }
 
 int main(int narg,char** arg)
 {
-  if(narg>1)
-    createParserFromRegex(arg[1]);
-  else
-    {
-      constexpr auto specs=createParserFromRegex("c|d(f?|g)","anna",".*");
-      const auto parser=createParserFromRegex<specs>("c|d(f?|g)","anna",".*");
-      if(const auto oi=parser.parse("ann"))
-	printf("parsed: %zu\n",*oi);
-      
-      // printf("NTransitions: %zu\n",parser.transitions.size());
-      // for(const auto& t : parser.transitions)
-      // 	t.printf();
-    }//i.nTranstitions;}
+  test();
+  
   return 0;
 }
