@@ -566,13 +566,17 @@ struct BaseRegexParser :
   }
 };
 
+/// Dynamic regex parser
 struct DynamicRegexParser :
   BaseRegexParser<DynamicRegexParser>
 {
+  /// States of the DFA
   std::vector<DState> dStates;
   
+  /// Transitions among the states of the DFA
   std::vector<RegexMachineTransition> transitions;
   
+  /// Construct from parse tree
   constexpr DynamicRegexParser(RegexParserNode& parseTree)
   {
     parseTree.setAllIds();
@@ -586,102 +590,122 @@ struct DynamicRegexParser :
     if(not std::is_constant_evaluated())
       parseTree.printf();
     
-    using DStateRegexNodes=
+    /// Label of the dState, given by the set of RegexParserNodes
+    /// which the dState represents
+    using DStateLabel=
       std::vector<RegexParserNode*>;
     
-    std::vector<DStateRegexNodes> dStatesRegexNodes=
+    /// Labels of the dState, set at the beginning to the firsts of the main node
+    std::vector<DStateLabel> dStateLabels=
       {parseTree.firsts};
     
+    /// List of the accepting dStates, which match the regex
     std::vector<std::pair<size_t,size_t>> acceptingDStates;
     
-    for(size_t iDState=0;iDState<dStatesRegexNodes.size();iDState++)
+    for(size_t iDState=0;iDState<dStateLabels.size();iDState++)
       {
+	/// Delimiters of a ange: begins (true) or just end(false) at
+	/// the given char (depending on the bool)
 	using RangeDel=
 	  std::pair<char,bool>;
 	
-	std::vector<RangeDel> rangeDels;
+	/// Delimiters of the range
+	std::vector<RangeDel> ranges;
 	
-	for(const auto& f : dStatesRegexNodes[iDState])
+	for(const auto& f : dStateLabels[iDState])
 	  {
+	    /// Current range, at the beginning set at the first range delimiter
 	    auto cur=
-	      rangeDels.begin();
+	      ranges.begin();
 	    
+	    /// Determine whether the range begins, when the end of
+	    /// the range will be inserted
 	    bool startNewRange=
 	      false;
 	    
+	    /// First matched char
 	    const char& b=
 	      f->begChar;
 	    
+	    /// Past the last matched char
 	    const char &e=
 	      f->endChar;
 	    
-	    while(cur!=rangeDels.end() and cur->first<b)
+	    // Find where to insert the range begin
+	    while(cur!=ranges.end() and cur->first<b)
 	      startNewRange=(cur++)->second;
 	    
-	    if(cur==rangeDels.end() or cur->first!=b)
-	      cur=rangeDels.insert(cur,{b,true})+1;
+	    // Insert the beginning of the range if not present
+	    if(cur==ranges.end() or cur->first!=b)
+	      cur=ranges.insert(cur,{b,true})+1;
 	    
-	    while(cur!=rangeDels.end() and cur->first<e)
+	    // Find where to insert the range end, marking that a
+	    // range must start at all intermediate delimiters
+	    while(cur!=ranges.end() and cur->first<e)
 	      {
 		startNewRange=cur->second;
 		cur++->second=true;
 	      }
 	    
-	    if(cur==rangeDels.end() or cur->first!=e)
-	      rangeDels.insert(cur,{e,startNewRange});
+	    // Insert the end of the range end, if not present
+	    if(cur==ranges.end() or cur->first!=e)
+	      ranges.insert(cur,{e,startNewRange});
 	  }
 	
 	if(not std::is_constant_evaluated())
 	  {
 	    printf("dState: {");
-	    for(size_t i=0;const auto& n : dStatesRegexNodes[iDState])
+	    for(size_t i=0;const auto& n : dStateLabels[iDState])
 	      printf("%s%zu",(i++==0)?"":",",n->id);
 	    printf("}\n");
 	  }
 	
-	for(size_t iRangeBeg=0;iRangeBeg+1<rangeDels.size();iRangeBeg++)
+	// Loop on all ranges to determine to which dState it points,
+	// inserting a new dState if not present
+	for(size_t iRangeBeg=0;iRangeBeg+1<ranges.size();iRangeBeg++)
 	  {
-	    const char& b=rangeDels[iRangeBeg].first;
-	    const char& e=rangeDels[iRangeBeg+1].first;
+	    /// Beginning of the range
+	    const char& b=
+	      ranges[iRangeBeg].first;
 	    
-	    DStateRegexNodes nextDState;
+	    /// End of the range
+	    const char& e=
+	      ranges[iRangeBeg+1].first;
+	    
+	    /// Label of the next dState
+	    DStateLabel nextDState;
+	    for(const auto& f : dStateLabels[iDState])
+	      if(b>=f->begChar and e<=f->endChar)
+		nextDState.insert(nextDState.end(),f->follows.begin(),f->follows.end());
+	    
+	    /// List of the recognized tokens
 	    std::vector<int> recogTokens;
-	    for(const auto& f : dStatesRegexNodes[iDState])
-	      {
-		if(b>=f->begChar and e<=f->endChar)
-		  nextDState.insert(nextDState.end(),f->follows.begin(),f->follows.end());
-		if(f->type==RegexParserNode::TOKEN)
-		  recogTokens.push_back(f->tokId);
-	      }
+	    for(const auto& f : dStateLabels[iDState])
+	      if(f->type==RegexParserNode::TOKEN)
+		recogTokens.push_back(f->tokId);
 	    
-	    if(not rangeDels[iRangeBeg+1].second)
+	    // If a new range does not start here, move on
+	    if(not ranges[iRangeBeg+1].second)
 	      iRangeBeg++;
 	    
+	    /// Check if two dStates differ, for some reason the std::vector comparison is not working with clang
 	    constexpr auto dStateDiffers=
 			[](const auto& a,
 			   const auto& b)
 			{
-			  bool d=a.size()!=b.size();
+			  bool d=
+			    a.size()!=b.size();
+			  
 			  for(size_t i=0;i<a.size() and not d;i++)
 			    d|=a[i]!=b[i];
+			  
 			  return d;
 			};
 	    
+	    /// Search the index of the next dState
 	    size_t iNextDState=0;
-	    while(iNextDState<dStatesRegexNodes.size() and dStateDiffers(dStatesRegexNodes[iNextDState],nextDState))
-	      {
-		// if(not std::is_constant_evaluated())
-		// 	{
-		// 	  printf("a: ");
-		// for(const auto& f : dStates[iNextDState])
-		// 	printf("%p ",f);
-		// printf(", b: ");
-		// for(const auto& f : nextDState)
-		// 	printf("%p ",f);
-		// printf("\n");
-		// 	}
-		iNextDState++;
-	      }
+	    while(iNextDState<dStateLabels.size() and dStateDiffers(dStateLabels[iNextDState],nextDState))
+	      iNextDState++;
 	    
 	    if(not std::is_constant_evaluated())
 	      {
@@ -691,8 +715,9 @@ struct DynamicRegexParser :
 		printf("}, %zu\n",iNextDState);
 	      }
 	    
-	    if(iNextDState==dStatesRegexNodes.size() and nextDState.size())
-	      dStatesRegexNodes.push_back(nextDState);
+	    // Creates the next dState label if not existing
+	    if(iNextDState==dStateLabels.size() and nextDState.size())
+	      dStateLabels.push_back(nextDState);
 	    
 	    // if(recogTokens.size()>1)
 	    //   errorEmitter("multiple token recognized");
@@ -703,6 +728,7 @@ struct DynamicRegexParser :
 	    if(recogTokens.size()==0 and (b==e))
 	      errorEmitter("token not recognized when chars not accepted");
 	    
+	    // Save the recognized token
 	    if(recogTokens.size())
 	      acceptingDStates.emplace_back(iDState,recogTokens.front());
 	    
@@ -710,13 +736,26 @@ struct DynamicRegexParser :
 	  }
       }
     
-    dStates.resize(dStatesRegexNodes.size()+1,DState{.accepting=false,.iToken=0});
+    /// Allocates the dStates
+    dStates.resize(dStateLabels.size()+1,DState{.accepting=false,.iToken=0});
     
+    // Count the number of transitions per dState
+    std::vector<size_t> nTransitionsPerDState(dStates.size());
     for(const auto& [iDState,b,e,iNext] : transitions)
-      dStates[iDState+1].transitionsBegin++;
-    for(size_t iDState=1;iDState<dStatesRegexNodes.size();iDState++)
-      dStates[iDState].transitionsBegin+=dStates[iDState-1].transitionsBegin;
+      nTransitionsPerDState[iDState]++;
     
+    // Sets the beginning of the transitions for each dState
+    for(size_t sum=0; DState& dState : dStates)
+      {
+	const size_t t=
+	  dState.transitionsBegin;
+	
+	dState.transitionsBegin=sum;
+	
+	sum+=t;
+      }
+    
+    // Mark whether the dState accepts
     for(const auto& [iDState,iToken] : acceptingDStates)
       {
 	dStates[iDState].accepting=true;
@@ -724,10 +763,10 @@ struct DynamicRegexParser :
       }
     
     if(not std::is_constant_evaluated())
-      for(size_t iDState=0;iDState<dStatesRegexNodes.size();iDState++)
+      for(size_t iDState=0;iDState<dStateLabels.size();iDState++)
 	{
 	  printf("dState %zu {",iDState);
-	  for(size_t i=0;const auto& n : dStatesRegexNodes[iDState])
+	  for(size_t i=0;const auto& n : dStateLabels[iDState])
 	    printf("%s%zu",(i++==0)?"":",",n->id);
 	  printf("} has the following transitions: \n");
 	  
@@ -739,20 +778,25 @@ struct DynamicRegexParser :
 	}
   }
   
+  /// Gets the parameters needed to build the constexpr parser
   constexpr RegexMachineSpecs getSpecs() const
   {
     return {.nDStates=dStates.size(),.nTranstitions=transitions.size()};
   }
 };
 
+/// RegexParser storing the machine in fixed size tables
 template <RegexMachineSpecs Specs>
 struct ConstexprRegexParser :
   BaseRegexParser<ConstexprRegexParser<Specs>>
 {
+  /// States of the machine
   std::array<DState,Specs.nDStates> dStates;
   
+  /// Transitions among states
   std::array<RegexMachineTransition,Specs.nTranstitions> transitions;
   
+  /// Create from dynamic-sized parser
   constexpr ConstexprRegexParser(const DynamicRegexParser& oth)
   {
     for(size_t i=0;i<Specs.nDStates;i++)
@@ -768,6 +812,7 @@ template <RegexMachineSpecs RPS=RegexMachineSpecs{},
 requires(std::is_same_v<char,T> and ...)
 constexpr auto createParserFromRegex(const T*...str)
 {
+  /// Creates the parse tree
   std::optional<RegexParserNode> parseTree=
     parseTreeFromRegex(str...);
   
