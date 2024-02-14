@@ -13,6 +13,23 @@ inline void errorEmitter(const char* str)
   fprintf(stderr,"Error: %s",str);
 }
 
+/// Implements static polymorphysm via CRTP, while we wait for C++-23
+template <typename T>
+struct StaticPolymorphic
+{
+  /// CRTP cast operator
+  constexpr T& self()
+  {
+    return *(T*)this;
+  }
+  
+  /// Const CRTP cast operator
+  constexpr const T& self() const
+  {
+    return *(const T*)this;
+  }
+};
+
 /// Keep track of what matched
 struct Matching
 {
@@ -507,8 +524,51 @@ struct RegexMachineSpecs
   }
 };
 
+/// Base functionality of the regex parser
+template <typename T>
+struct BaseRegexParser :
+  StaticPolymorphic<T>
+{
+  /// Import the static polymorphysm cast
+  using StaticPolymorphic<T>::self;
+  
+  /// Parse a string
+  constexpr std::optional<size_t> parse(std::string_view v) const
+  {
+    size_t dState=0;
+    
+    while(dState<self().dStates.size())
+      {
+	if(not std::is_constant_evaluated())
+	  printf("%zu\n",dState);
+	const char& c=
+	  v.empty()?'\0':v.front();
+	
+	auto trans=self().transitions.begin()+self().dStates[dState].transitionsBegin;
+	while(trans!=self().transitions.end() and trans->iDStateFrom==dState and not((trans->beg<=c and trans->end>c)))
+	  trans++;
+	
+	if(trans!=self().transitions.end() and trans->iDStateFrom==dState)
+	  {
+	    if(not std::is_constant_evaluated())
+	      printf("matched %c with trans %zu %c - %c\n",c,trans->iDStateFrom,trans->beg,trans->end);
+	    dState=trans->nextDState;
+	    v.remove_prefix(1);
+	  }
+	else
+	  if(self().dStates[dState].accepting)
+	    return {self().dStates[dState].iToken};
+	  else
+	    dState=self().dStates.size();
+      }
+    
+    return {};
+  }
+};
+
 template <RegexMachineSpecs Specs>
-struct ConstexprRegexParser
+struct ConstexprRegexParser :
+  BaseRegexParser<ConstexprRegexParser<Specs>>
 {
   std::array<DState,Specs.nDStates> dStates;
   
@@ -521,38 +581,6 @@ struct ConstexprRegexParser
       this->dStates[i]=dStateSpecs[i];
     for(size_t i=0;i<Specs.nTranstitions;i++)
       this->transitions[i]=transitions[i];
-  }
-  
-  constexpr std::optional<size_t> parse(std::string_view v) const
-  {
-    size_t dState=0;
-    
-    while(dState<dStates.size())
-      {
-	if(not std::is_constant_evaluated())
-	  printf("%zu\n",dState);
-	const char& c=
-	  v.empty()?'\0':v.front();
-	
-	auto trans=transitions.begin()+dStates[dState].transitionsBegin;
-	while(trans!=transitions.end() and trans->iDStateFrom==dState and not((trans->beg<=c and trans->end>c)))
-	  trans++;
-	
-	if(trans!=transitions.end() and trans->iDStateFrom==dState)
-	  {
-	    if(not std::is_constant_evaluated())
-	      printf("matched %c with trans %zu %c - %c\n",c,trans->iDStateFrom,trans->beg,trans->end);
-	    dState=trans->nextDState;
-	    v.remove_prefix(1);
-	  }
-	else
-	  if(dStates[dState].accepting)
-	    return {dStates[dState].iToken};
-	  else
-	    dState=dStates.size();
-      }
-    
-    return {};
   }
 };
 
