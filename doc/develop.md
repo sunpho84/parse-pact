@@ -82,7 +82,7 @@ invalid. This implies rolling back the input stream.
 Let us take the example of the AST generated for the regular
 expression **"d?e"**:
 
-![AST for the regexp d?eB](ast.png "AST for the regexp "d?e"")
+![AST for the regexp d?eB](ast.png "AST for the regexp")
 
 ### AST to NFA
 
@@ -335,33 +335,6 @@ If multiple regexp of the same length are matched, the first defined
 is matched.
 
 
-# Self contained parser
-
-This summarizes ideas to build a self-hosted, compile time parser.
-
-## Core elements
-
-* First thing to build is a Grammar class specifying all the rules of
-  the grammar. This can be populated with all the rules by suitable
-  methods.
-* We also need the ParserGenerator, which takes a grammar and returns
-  a Parser, which parse a text on the basis of reduction rules,
-  executing suitable Actions for every reduction, defined via classes
-  that are selected via template string literal.
-
-These two elements are building blocks for every parser generation.
-With them, one can specify a grammar via explicitly calls to the
-grammar class, and produce a parser which executes suitable action at
-every reduction.
-
-## Creation of the regexp parser
- 
- * One needs to populate a Grammar class with all the rules for
-   matching a regular expression. 
- * At the same time, one specifies all the Actions, which populates a
-   grammar with all the subrules specifiying the grammar of the given
-   subexpression.
- 
 ## Two step compilation
 
 The parser is generated in two steps. 
