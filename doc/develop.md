@@ -362,3 +362,44 @@ every reduction.
    grammar with all the subrules specifiying the grammar of the given
    subexpression.
  
+## Two step compilation
+
+The parser is generated in two steps. 
+
+* At first step, the parser is built in a non-constant sized
+  structure, which is used to estimate the required table sizes.
+* On this basis, the needed fixed-size structure parser is provided,
+ and used to store the parser, which is built again.
+ 
+ This requires to generate the parser twice, is not super-elegant but
+ is sustainable. This is needed because the fixed-size structure can
+ be created only after the estimate of the size is available as a
+ constexpr. This requires the size of the non-constant parser to be
+ returned from the parser generator routine, in place of the
+ non-constant parser itself, which would not be a constexpr. This
+ implies that the non-constant parser is destroyed as it is not
+ returned, hence it must be reconstructed.
+ 
+ The procedure is illustrated in the following example:
+
+```c++
+template <size_t N=0>
+constexpr auto get(const std::string_view& str)
+{
+  if constexpr(N==0)
+    return str.size();
+  else
+    {
+      std::array<char,N> res;
+      std::copy(str.begin(),str.end(),res.begin());
+      return res;
+    }
+}
+
+void test()
+{
+  constexpr char str[]="ciao!";
+  constexpr auto strArr=get<get(str)>(str);
+  static_assert(strArr[0]=='c');
+}
+```
