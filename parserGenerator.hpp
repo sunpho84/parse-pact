@@ -1,4 +1,5 @@
 #include <array>
+#include <bitset>
 #include <cctype>
 #include <cstdio>
 #include <limits>
@@ -29,6 +30,21 @@ struct StaticPolymorphic
     return *(const T*)this;
   }
 };
+
+/// Return the escaped counterpart of the escaped part in a few cases, or the char itself
+constexpr char maybeEscape(const char& c)
+{
+  switch (c)
+    {
+    case 'b':return '\b';
+    case 'n':return '\n';
+    case 'f':return '\f';
+    case 'r':return '\r';
+    case 't':return '\t';
+    }
+  
+  return c;
+}
 
 /// Keep track of what matched
 struct Matching
@@ -67,6 +83,42 @@ struct Matching
     if(accepting)
       ref.remove_prefix(1);
 	
+    return accepting;
+  }
+
+  /// Matches a possibly escaped char
+  constexpr char matchPossiblyEscapedCharNotIn(const std::string_view& notIn)
+  {
+    if(const char c=matchCharNotIn(notIn))
+      if(const char d=(c=='\\')?maybeEscape(matchAnyChar()):c)
+	return d;
+    
+    return '\0';
+  }
+  
+  /// Match string
+  constexpr bool matchStr(std::string_view str)
+  {
+    /// Store backup in case not accepted
+    std::string_view backup=
+      ref;
+    
+    bool accepting=
+      true;
+    
+    while(accepting and (not (str.empty() or ref.empty())))
+      if((accepting&=ref.starts_with(str.front())))
+	{
+	  if(not std::is_constant_evaluated())
+	    printf("matched %c\n",str.front());
+	  
+	  ref.remove_prefix(1);
+	  str.remove_prefix(1);
+	}
+    
+    if(not accepting)
+      ref=backup;
+    
     return accepting;
   }
   
@@ -344,6 +396,221 @@ struct RegexParserNode
 /// Forward declaration
 constexpr std::optional<RegexParserNode> matchAndParsePossiblyOrredExpr(Matching& matchIn);
 
+struct CharRanges
+{
+  std::bitset<std::numeric_limits<char>::max()+1> matched;
+  
+  constexpr void set()
+  {
+  }
+  
+  template <typename...Tail>
+  constexpr void set(const char& head,
+		     const Tail&...tail)
+  {
+    matched.set(head);
+    
+    set(tail...);
+  }
+  
+  template <typename...Tail>
+  constexpr void set(const char* head,
+		     const Tail&...tail)
+  {
+    while(*head!='\0')
+      matched.set(*head++);
+    
+    set(tail...);
+  }
+  
+  template <typename...Tail>
+  constexpr void set(const std::pair<char,char>& head,
+		     const Tail&...tail)
+  {
+    const auto& [b,e]=head;
+    
+    for(char c=b;c<e;c++)
+      set(c);
+  }
+  
+  template <typename...Head,
+	    typename...Tail>
+  constexpr void set(const std::tuple<Head...>& head,
+		     const Tail&...tail)
+  {
+    std::apply([this](const Head&...head)
+    {
+      (this->set(head),...);
+    },head);
+    
+    set(tail...);
+  }
+  
+  constexpr CharRanges()
+  {
+    for(size_t i=0;i<matched.size();i++)
+      matched.set(i,false);
+  }
+};
+
+/// Matches a set of chars in []
+constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
+{
+  constexpr std::pair<char,char> lower{'a','z'+1},upper{'A','Z'+1},digit{'0','9'+1};
+  constexpr auto alpha=std::make_tuple(lower,upper);
+  constexpr auto alnum=std::make_tuple(alpha,digit);
+  
+  /// Keep track of the original point in case of needed backup
+  std::string_view backup=
+    matchIn.ref;
+  
+  if(matchIn.matchChar('['))
+    {
+      if(not std::is_constant_evaluated())
+	printf("matched [\n");
+	
+      CharRanges matchableChars;
+      
+      if(matchIn.matchChar('-'))
+	matchableChars.set('-');
+
+      const auto matchClass=
+	[&matchableChars,
+	 &matchIn](const auto& matchClass,
+		   const std::string_view& name,
+		   const auto& range,
+		   const auto&...tail)
+	{
+	  if(matchIn.matchStr(name))
+	    {
+	      if(not std::is_constant_evaluated())
+		printf("matched class %s\n",name.begin());
+	      
+	      matchableChars.set(range);
+	      
+	      return true;
+	    }
+	  else
+	    if constexpr(sizeof...(tail))
+	      return matchClass(matchClass,tail...);
+	    else
+	      return false;
+	};
+      
+      bool matched=true;
+      while(matched)
+	{
+	  if(not matchClass(matchClass,
+			    "[:alnum:]",alnum,
+			    "[:word:]",std::make_tuple(alnum,'_'),
+			    "[:alpha:]",alpha,
+			    "[:blank:]"," \t",
+			    "[:cntrl:]",std::make_tuple(std::make_pair((char)0x01,(char)(0x1f+1)),std::make_pair((char)0x7f,(char)(0x7f+1))),
+			    "[:digit:]",digit,
+			    "[:graph:]",std::make_pair((char)0x21,(char)(0x7e +1)),
+			    "[:lower:]",lower,
+			    "[:print:]",std::make_pair((char)0x20,(char)(0x7e +1)),
+			    "[:punct:]","-!\"#$%&'()*+,./:;<=>?@[\\]_`{|}~",
+			    "[:space:]"," \t\r\n",
+			    "[:upper:]",upper,
+			    "[:xdigit:]","0123456789abcdefABCDEF"))
+	    {
+	      if(not std::is_constant_evaluated())
+		printf("matched no char class\n");
+	      
+	      if(const char b=matchIn.matchPossiblyEscapedCharNotIn("^]-"))
+		{
+		  if(not std::is_constant_evaluated())
+		    printf("matched char %c\n",b);
+		  
+		  std::string_view backup=
+		    matchIn.ref;
+		  
+		  bool accepting=
+		    false;
+		  
+		  if(matchIn.matchChar('-'))
+		    {
+		      if(not std::is_constant_evaluated())
+			printf(" matched - to get char range\n");
+		  
+		      if(const char e=matchIn.matchPossiblyEscapedCharNotIn("^]-"))
+			{
+			  if(not std::is_constant_evaluated())
+			    printf("  matched char range end %c\n",e);
+			  matchableChars.set(std::make_pair(b,e));
+			  accepting=true;
+			}
+		    }
+		  
+		  if(not accepting)
+		    {
+		      if(not std::is_constant_evaluated())
+			printf("no char range end, single char\n");
+		      matchableChars.set(b);
+		      matchIn.ref=backup;
+		    }
+		}
+	      else
+		matched=false;
+	    }
+	}
+      
+      if(matchIn.matchChar('-'))
+	matchableChars.set('-');
+      
+      if(matchIn.matchChar(']'))
+	{
+	  if(not std::is_constant_evaluated())
+	    printf("matched ]\n");
+	  std::optional<RegexParserNode> res;
+	  
+	  auto getRange=
+	    [&matchableChars,
+	     b=(char)('\0'+1)]() mutable ->std::optional<RegexParserNode>
+	    {
+	      if(not std::is_constant_evaluated())
+		printf("starting a range search, beggining at char %d\n",b);
+	      
+	      while(b<127 and not matchableChars.matched[b])
+		b++;
+	      
+	      if(b<127)
+		{
+		  char e=b+1;
+		  while(e<127 and matchableChars.matched[e])
+		    e++;
+		  
+		  const char ob=b;
+		  
+		  b=e;
+		  
+		  if(not std::is_constant_evaluated())
+		    printf("adding range [%c,%c)\n",ob,(char)(e+1));
+		  
+		  return RegexParserNode{RegexParserNode::Type::CHAR,{},ob,(char)(e+1)};
+		}
+	      
+	      if(not std::is_constant_evaluated())
+		printf("no char range found!\n");
+	      
+	      return {};
+	    };
+	  
+	  if((res=getRange()))
+	    while(auto nest=getRange())
+	      res=RegexParserNode{RegexParserNode::Type::OR,{std::move(*res),std::move(*nest)}};
+	  
+	  return res;
+	}
+    }
+  
+  matchIn.ref=
+    backup;
+  
+  return {};
+}
+
 /// Matches a subexpression
 constexpr std::optional<RegexParserNode> matchSubExpr(Matching& matchIn)
 {
@@ -360,6 +627,7 @@ constexpr std::optional<RegexParserNode> matchSubExpr(Matching& matchIn)
   return {};
 }
 
+
 /// Matches any char but '\0'
 constexpr std::optional<RegexParserNode> matchDot(Matching& matchIn)
 {
@@ -369,27 +637,11 @@ constexpr std::optional<RegexParserNode> matchDot(Matching& matchIn)
   return {};
 }
 
-/// Return the escaped counterpart of the escaped part in a few cases, or the char itself
-constexpr char maybeEscape(const char& c)
-{
-  switch (c)
-    {
-    case 'b':return '\b';
-    case 'n':return '\n';
-    case 'f':return '\f';
-    case 'r':return '\r';
-    case 't':return '\t';
-    }
-  
-  return c;
-}
-
 /// Match a char including possible escape
-constexpr std::optional<RegexParserNode> matchPossiblyEscapedChar(Matching& matchIn)
+constexpr std::optional<RegexParserNode> matchAndParsePossiblyEscapedChar(Matching& matchIn)
 {
-  if(const char c=matchIn.matchCharNotIn("|*+?()"))
-    if(const char d=(c=='\\')?maybeEscape(matchIn.matchAnyChar()):c)
-      return RegexParserNode{RegexParserNode::Type::CHAR,{},d,(char)(d+1)};
+  if(const char c=matchIn.matchPossiblyEscapedCharNotIn("|*+?()"))
+    return RegexParserNode{RegexParserNode::Type::CHAR,{},c,(char)(c+1)};
   
   return {};
 }
@@ -402,9 +654,10 @@ constexpr std::optional<RegexParserNode> matchAndParseExprWithPossiblePostfix(Ma
   /// Result to be returned
   std::optional<RegexParserNode> m;
   
-  if(not (m=matchSubExpr(matchIn)))
-    if(not (m=matchDot(matchIn)))
-      m=matchPossiblyEscapedChar(matchIn);
+  if(not (m=matchBracketExpr(matchIn)))
+    if(not (m=matchSubExpr(matchIn)))
+      if(not (m=matchDot(matchIn)))
+	m=matchAndParsePossiblyEscapedChar(matchIn);
   
   if(m)
     if(const char c=matchIn.matchAnyCharIn("+?*"))
@@ -604,7 +857,7 @@ struct DynamicRegexParser :
     
     for(size_t iDState=0;iDState<dStateLabels.size();iDState++)
       {
-	/// Delimiters of a ange: begins (true) or just end(false) at
+	/// Delimiters of a range: begins (true) or just end(false) at
 	/// the given char (depending on the bool)
 	using RangeDel=
 	  std::pair<char,bool>;
