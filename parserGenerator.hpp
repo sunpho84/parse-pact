@@ -395,7 +395,47 @@ struct RegexParserNode
 /// Forward declaration
 constexpr std::optional<RegexParserNode> matchAndParsePossiblyOrredExpr(Matching& matchIn);
 
-struct CharRanges
+/// Base char range operations
+template <typename T>
+struct BaseCharRanges :
+  StaticPolymorphic<T>
+{
+  using StaticPolymorphic<T>::self;
+  
+  /// Insert a single char
+  constexpr void set(const char& head)
+  {
+    self().set(std::make_pair(head,(char)(head+1)));
+  }
+  
+  /// Insert a string
+  constexpr void set(const char* head)
+  {
+    while(*head!='\0')
+      self().set(*head++);
+  }
+  
+  /// Insert a tuple
+  template <typename...Head>
+  constexpr void set(const std::tuple<Head...>& head)
+  {
+    std::apply([this](const Head&...head)
+    {
+      self().set(head...);
+    },head);
+  }
+  
+  /// Generic case
+  template <typename...Args>
+  constexpr void set(const Args&...args)
+  {
+    (self().set(args),...);
+  }
+};
+
+/// Range of chars where consecutive ranges are not merged
+struct UnmergedCharRanges :
+  BaseCharRanges<UnmergedCharRanges>
 {
   /// Delimiters of a range: begins (true) or just end(false) at
   /// the given char (depending on the bool)
@@ -405,32 +445,10 @@ struct CharRanges
   /// Delimiters of the range
   std::vector<RangeDel> ranges;
   
-  constexpr void set()
-  {
-  }
+  using BaseCharRanges<UnmergedCharRanges>::set;
   
-  template <typename...Tail>
-  constexpr void set(const char& head,
-		     const Tail&...tail)
-  {
-    set(std::make_pair(head,(char)(head+1)));
-    
-    set(tail...);
-  }
-  
-  template <typename...Tail>
-  constexpr void set(const char* head,
-		     const Tail&...tail)
-  {
-    while(*head!='\0')
-      set(*head++);
-    
-    set(tail...);
-  }
-  
-  template <typename...Tail>
-  constexpr void set(const std::pair<char,char>& head,
-		     const Tail&...tail)
+  /// Insert a range
+  constexpr void set(const std::pair<char,char>& head)
   {
     const auto& [b,e]=head;
     
@@ -462,23 +480,9 @@ struct CharRanges
     // Insert the end of the range end, if not present
     if(cur==ranges.end() or cur->first!=e)
       ranges.insert(cur,{e,startNewRange});
-    
-    set(tail...);
   }
   
-  template <typename...Head,
-	    typename...Tail>
-  constexpr void set(const std::tuple<Head...>& head,
-		     const Tail&...tail)
-  {
-    std::apply([this](const Head&...head)
-    {
-      (this->set(head),...);
-    },head);
-    
-    set(tail...);
-  }
-    
+  /// Loop on all ranges
   template <typename F>
   constexpr void onAllRanges(const F& f) const
   {
@@ -501,6 +505,76 @@ struct CharRanges
   }
 };
 
+/// Range of chars where consecutive ranges are not merged
+struct MergedCharRanges :
+  BaseCharRanges<MergedCharRanges>
+{
+  /// Delimiters of a range, stored as [beg=first,end=second)
+  using RangeDel=
+    std::pair<char,char>;
+  
+  /// Delimiters of the range
+  std::vector<RangeDel> ranges;
+  
+  using BaseCharRanges<MergedCharRanges>::set;
+  
+  /// Insert a range
+  constexpr void set(const std::pair<char,char>& head)
+  {
+    const auto& [b,e]=head;
+    // printf("Considering [%d,%d)\n",b,e);
+    
+    /// Current range, at the beginning set at the first range delimiter
+    auto cur=
+      ranges.begin();
+    
+    // Find where to insert the range
+    while(cur!=ranges.end() and cur->second<b)
+      cur++;
+    
+    const size_t i=
+      std::distance(ranges.begin(),cur);
+    
+    // Insert the beginning of the range if not present
+    if(cur==ranges.end() or cur->second<b)
+      // {
+      // 	printf("Inserting [%d,%d) at %zu\n",b,e,i);
+	ranges.insert(cur,{b,e});
+      // }
+    else
+      {
+	if(cur->first>b)
+	  // {
+	  //   printf("range %zu [%d,%d) extended left to ",i,cur->first,cur->second);
+	    cur->first=std::min(cur->first,b);
+	  //   printf("[%d,%d)\n",cur->first,cur->second);
+	  // }
+	
+	if(cur->second<e)
+	  {
+	    // printf("range %zu [%d,%d) extended right to ",i,cur->first,cur->second);
+	    cur->second=e;
+	    // printf("[%d,%d)\n",cur->first,cur->second);
+	    while(cur+1!=ranges.end() and cur->second>=(cur+1)->first)
+	      {
+		cur->second=std::max(cur->second,(cur+1)->second);
+		// printf("extended right to [%d,%d)\n",cur->first,cur->second);
+		// printf("erasing [%d,%d)\n",(cur+1)->first,(cur+1)->second);
+		cur=ranges.erase(cur+1)-1;
+	      }
+	  }
+      }
+  }
+  
+  /// Loop on all ranges
+  template <typename F>
+  constexpr void onAllRanges(const F& f) const
+  {
+    for(const auto& [b,e] : ranges)
+      f(b,e);
+  }
+};
+
 /// Matches a set of chars in []
 constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
 {
@@ -517,11 +591,12 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
       if(not std::is_constant_evaluated())
 	printf("matched [\n");
 	
-      CharRanges matchableChars;
+      /// List of matchable chars
+      MergedCharRanges matchableChars;
       
       if(matchIn.matchChar('-'))
 	matchableChars.set('-');
-
+      
       const auto matchClass=
 	[&matchableChars,
 	 &matchIn](const auto& matchClass,
@@ -883,7 +958,7 @@ struct DynamicRegexParser :
     for(size_t iDState=0;iDState<dStateLabels.size();iDState++)
       {
 	/// Delimiters of the range
-	CharRanges ranges;
+	UnmergedCharRanges ranges;
 	
 	for(const auto& f : dStateLabels[iDState])
 	  ranges.set(std::make_tuple(f->begChar,f->endChar));
