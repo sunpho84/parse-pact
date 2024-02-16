@@ -406,16 +406,16 @@ struct BaseCharRanges :
   using StaticPolymorphic<T>::self;
   
   /// Insert a single char
-  constexpr void set(const char& head)
+  constexpr void set(const char& c)
   {
-    self().set(std::make_pair(head,(char)(head+1)));
+    self().set(std::make_pair(c,(char)(c+1)));
   }
   
   /// Insert a string
-  constexpr void set(const char* head)
+  constexpr void set(const char* str)
   {
-    while(*head!='\0')
-      self().set(*head++);
+    while(*str!='\0')
+      self().set(*str++);
   }
   
   /// Insert a tuple
@@ -516,9 +516,6 @@ struct UnmergedCharRanges :
 	
 	f(b,e);
 	
-	if(not std::is_constant_evaluated())
-	  printf(" wdewg %d %d\n",b,e);
-	
 	// If a new range does not start here, move on
 	if(not ranges[iRangeBeg+1].second)
 	  iRangeBeg++;
@@ -539,6 +536,41 @@ struct MergedCharRanges :
   
   /// Import the set methods from base class
   using BaseCharRanges<MergedCharRanges>::set;
+  
+  /// Convert to the complementary range
+  constexpr void negate()
+  {
+    /// Previous end, at the beginning is the first nonzero char
+    char prevEnd=
+      '\0'+1;
+    
+    /// Creates the negated ranges
+    std::vector<RangeDel> negatedRanges;
+    for(const auto& [b,e] : ranges)
+      {
+	if(prevEnd!=b)
+	  negatedRanges.push_back({prevEnd,b});
+	prevEnd=e;
+      }
+    
+    // Add from last range to the end
+    if(const char m=std::numeric_limits<char>::max();prevEnd<m)
+      negatedRanges.push_back({prevEnd,m});
+    
+    // if(not std::is_constant_evaluated())
+    //   {
+    // 	printf("range:\n");
+    // 	for(const auto& [b,e] : ranges)
+    // 	  printf(" [%d,%d)\n",b,e);
+    // 	printf("negated range:\n");
+    // 	for(const auto& [b,e] : negatedRanges)
+    // 	  printf(" [%d,%d)\n",b,e);
+    //   }
+    
+    // Replaces the range with the negated one
+    ranges=
+      std::move(negatedRanges);
+  }
   
   /// Insert a range
   constexpr void set(const std::pair<char,char>& head)
@@ -635,6 +667,10 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
   
   if(matchIn.matchChar('['))
     {
+      /// Take whether the range is negated
+      const bool negated=
+	matchIn.matchChar('^');
+	
       // if(not std::is_constant_evaluated())
       // 	printf("matched [\n");
 	
@@ -706,7 +742,7 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
 		    {
 		      // if(not std::is_constant_evaluated())
 		      // 	printf(" matched - to get char range\n");
-		  
+		      
 		      if(const char e=matchIn.matchPossiblyEscapedCharNotIn("^]-"))
 			{
 			  // if(not std::is_constant_evaluated())
@@ -734,6 +770,9 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
       
       if(matchIn.matchChar(']'))
 	{
+	  if(negated)
+	    matchableChars.negate();
+	  
 	  // if(not std::is_constant_evaluated())
 	  //   printf("matched ]\n");
 	  
@@ -745,7 +784,7 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
 	  {
 	    /// First create a detached node
 	    auto tmp=
-	      RegexParserNode{RegexParserNode::Type::CHAR,{},b,(char)(e+1)};
+	      RegexParserNode{RegexParserNode::Type::CHAR,{},b,e};
 	    
 	    if(res)
 	      res=RegexParserNode{RegexParserNode::Type::OR,{std::move(*res),std::move(tmp)}};
