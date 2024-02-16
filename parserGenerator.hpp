@@ -522,7 +522,6 @@ struct MergedCharRanges :
   constexpr void set(const std::pair<char,char>& head)
   {
     const auto& [b,e]=head;
-    // printf("Considering [%d,%d)\n",b,e);
     
     /// Current range, at the beginning set at the first range delimiter
     auto cur=
@@ -532,34 +531,21 @@ struct MergedCharRanges :
     while(cur!=ranges.end() and cur->second<b)
       cur++;
     
-    const size_t i=
-      std::distance(ranges.begin(),cur);
-    
     // Insert the beginning of the range if not present
     if(cur==ranges.end() or cur->second<b)
-      // {
-      // 	printf("Inserting [%d,%d) at %zu\n",b,e,i);
 	ranges.insert(cur,{b,e});
-      // }
     else
       {
 	if(cur->first>b)
-	  // {
-	  //   printf("range %zu [%d,%d) extended left to ",i,cur->first,cur->second);
 	    cur->first=std::min(cur->first,b);
-	  //   printf("[%d,%d)\n",cur->first,cur->second);
-	  // }
 	
 	if(cur->second<e)
 	  {
-	    // printf("range %zu [%d,%d) extended right to ",i,cur->first,cur->second);
 	    cur->second=e;
-	    // printf("[%d,%d)\n",cur->first,cur->second);
+	    
 	    while(cur+1!=ranges.end() and cur->second>=(cur+1)->first)
 	      {
 		cur->second=std::max(cur->second,(cur+1)->second);
-		// printf("extended right to [%d,%d)\n",cur->first,cur->second);
-		// printf("erasing [%d,%d)\n",(cur+1)->first,(cur+1)->second);
 		cur=ranges.erase(cur+1)-1;
 	      }
 	  }
