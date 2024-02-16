@@ -480,12 +480,24 @@ struct UnmergedCharRanges :
     // Insert the end of the range end, if not present
     if(cur==ranges.end() or cur->first!=e)
       ranges.insert(cur,{e,startNewRange});
+    
+    // if(not std::is_constant_evaluated())
+    //   {
+    // 	printf("  new range after inserting [%d;%d): \n",b,e);
+    // 	for(const auto& [b,e] : ranges)
+    // 	  printf("    r: %d %d\n",b,e);
+    // 	printf("\n");
+    //   }
   }
   
   /// Loop on all ranges
   template <typename F>
   constexpr void onAllRanges(const F& f) const
   {
+    // if(not std::is_constant_evaluated())
+    //   for(const auto& [b,e] : ranges)
+    // 	printf("    r: %d %d\n",b,e);
+    
     for(size_t iRangeBeg=0;iRangeBeg+1<ranges.size();iRangeBeg++)
       {
 	/// Beginning of the range
@@ -497,6 +509,9 @@ struct UnmergedCharRanges :
 	  ranges[iRangeBeg+1].first;
 	
 	f(b,e);
+	
+	if(not std::is_constant_evaluated())
+	  printf(" wdewg %d %d\n",b,e);
 	
 	// If a new range does not start here, move on
 	if(not ranges[iRangeBeg+1].second)
@@ -522,6 +537,8 @@ struct MergedCharRanges :
   constexpr void set(const std::pair<char,char>& head)
   {
     const auto& [b,e]=head;
+    if(not std::is_constant_evaluated())
+      printf("Considering [%d,%d)\n",b,e);
     
     /// Current range, at the beginning set at the first range delimiter
     auto cur=
@@ -531,21 +548,42 @@ struct MergedCharRanges :
     while(cur!=ranges.end() and cur->second<b)
       cur++;
     
+    const size_t i=
+      std::distance(ranges.begin(),cur);
+    
     // Insert the beginning of the range if not present
     if(cur==ranges.end() or cur->second<b)
+      {
+	if(not std::is_constant_evaluated())
+	  printf("Inserting [%d,%d) at %zu\n",b,e,i);
 	ranges.insert(cur,{b,e});
+      }
     else
       {
 	if(cur->first>b)
+	  {
+	    if(not std::is_constant_evaluated())
+	      printf("range %zu [%d,%d) extended left to ",i,cur->first,cur->second);
 	    cur->first=std::min(cur->first,b);
+	    if(not std::is_constant_evaluated())
+	      printf("[%d,%d)\n",cur->first,cur->second);
+	  }
 	
 	if(cur->second<e)
 	  {
+	    if(not std::is_constant_evaluated())
+	      printf("range %zu [%d,%d) extended right to ",i,cur->first,cur->second);
 	    cur->second=e;
-	    
+	    if(not std::is_constant_evaluated())
+	      printf("[%d,%d)\n",cur->first,cur->second);
 	    while(cur+1!=ranges.end() and cur->second>=(cur+1)->first)
 	      {
 		cur->second=std::max(cur->second,(cur+1)->second);
+		if(not std::is_constant_evaluated())
+		  {
+		    printf("extended right to [%d,%d)\n",cur->first,cur->second);
+		    printf("erasing [%d,%d)\n",(cur+1)->first,(cur+1)->second);
+		  }
 		cur=ranges.erase(cur+1)-1;
 	      }
 	  }
@@ -879,19 +917,28 @@ struct BaseRegexParser :
     while(dState<self().dStates.size())
       {
 	if(not std::is_constant_evaluated())
-	  printf("%zu\n",dState);
+	  printf("\nEntering dState %zu\n",dState);
 	const char& c=
 	  v.empty()?'\0':v.front();
 	
+	if(not std::is_constant_evaluated())
+	  printf("trying to match %c\n",c);
+	
 	auto trans=self().transitions.begin()+self().dStates[dState].transitionsBegin;
+	if(not std::is_constant_evaluated())
+	  printf("First transition: %zu\n",self().dStates[dState].transitionsBegin);
 	while(trans!=self().transitions.end() and trans->iDStateFrom==dState and not((trans->beg<=c and trans->end>c)))
-	  trans++;
+	  {
+	    if(not std::is_constant_evaluated())
+	      printf("Ignored transition [%c,%c)\n",trans->beg,trans->end);
+	    trans++;
+	  }
 	
 	if(trans!=self().transitions.end() and trans->iDStateFrom==dState)
 	  {
-	    if(not std::is_constant_evaluated())
-	      printf("matched %c with trans %zu %c - %c\n",c,trans->iDStateFrom,trans->beg,trans->end);
 	    dState=trans->nextDState;
+	    if(not std::is_constant_evaluated())
+	      printf("matched %c with trans %zu [%c,%c), going to dState %zu\n",c,trans->iDStateFrom,trans->beg,trans->end,dState);
 	    v.remove_prefix(1);
 	  }
 	else
@@ -947,7 +994,7 @@ struct DynamicRegexParser :
 	UnmergedCharRanges ranges;
 	
 	for(const auto& f : dStateLabels[iDState])
-	  ranges.set(std::make_tuple(f->begChar,f->endChar));
+	  ranges.set(std::make_pair(f->begChar,f->endChar));
 	
 	if(not std::is_constant_evaluated())
 	  {
@@ -1026,7 +1073,7 @@ struct DynamicRegexParser :
       }
     
     /// Allocates the dStates
-    dStates.resize(dStateLabels.size()+1,DState{.accepting=false,.iToken=0});
+    dStates.resize(dStateLabels.size(),DState{.accepting=false,.iToken=0});
     
     // Count the number of transitions per dState
     std::vector<size_t> nTransitionsPerDState(dStates.size());
@@ -1034,14 +1081,14 @@ struct DynamicRegexParser :
       nTransitionsPerDState[iDState]++;
     
     // Sets the beginning of the transitions for each dState
-    for(size_t sum=0; DState& dState : dStates)
+    for(size_t sum=0,iDState=0;iDState<dStates.size();iDState++)
       {
-	const size_t t=
-	  dState.transitionsBegin;
+	DState& dState=
+	  dStates[iDState];
 	
 	dState.transitionsBegin=sum;
 	
-	sum+=t;
+	sum+=nTransitionsPerDState[iDState];
       }
     
     // Mark whether the dState accepts
@@ -1057,7 +1104,7 @@ struct DynamicRegexParser :
 	  printf("dState %zu {",iDState);
 	  for(size_t i=0;const auto& n : dStateLabels[iDState])
 	    printf("%s%zu",(i++==0)?"":",",n->id);
-	  printf("} has the following transitions: \n");
+	  printf("} has the following transitions which start at %zu: \n",dStates[iDState].transitionsBegin);
 	  
 	  for(size_t iTransition=dStates[iDState].transitionsBegin;iTransition<transitions.size() and transitions[iTransition].iDStateFrom==iDState;iTransition++)
 	    transitions[iTransition].printf();
