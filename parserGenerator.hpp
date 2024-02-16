@@ -84,7 +84,7 @@ struct Matching
 	
     return accepting;
   }
-
+  
   /// Matches a possibly escaped char
   constexpr char matchPossiblyEscapedCharNotIn(const std::string_view& notIn)
   {
@@ -102,14 +102,15 @@ struct Matching
     std::string_view backup=
       ref;
     
+    /// Accept to begin with
     bool accepting=
       true;
     
     while(accepting and (not (str.empty() or ref.empty())))
       if((accepting&=ref.starts_with(str.front())))
 	{
-	  if(not std::is_constant_evaluated())
-	    printf("matched %c\n",str.front());
+	  // if(not std::is_constant_evaluated())
+	  //   printf("matched %c\n",str.front());
 	  
 	  ref.remove_prefix(1);
 	  str.remove_prefix(1);
@@ -140,6 +141,7 @@ struct Matching
   {
     if(not ref.empty())
       {
+	/// Position of the char in the filt, npos if not present
 	const size_t pos=
 	  filt.find_first_of(ref.front());
 	
@@ -400,6 +402,7 @@ template <typename T>
 struct BaseCharRanges :
   StaticPolymorphic<T>
 {
+  /// Import the static polymorphysm cast
   using StaticPolymorphic<T>::self;
   
   /// Insert a single char
@@ -445,12 +448,15 @@ struct UnmergedCharRanges :
   /// Delimiters of the range
   std::vector<RangeDel> ranges;
   
+  /// Import the set method from base class
   using BaseCharRanges<UnmergedCharRanges>::set;
   
   /// Insert a range
   constexpr void set(const std::pair<char,char>& head)
   {
-    const auto& [b,e]=head;
+    /// Begin and end of the range
+    const auto& [b,e]=
+      head;
     
     /// Current range, at the beginning set at the first range delimiter
     auto cur=
@@ -531,14 +537,17 @@ struct MergedCharRanges :
   /// Delimiters of the range
   std::vector<RangeDel> ranges;
   
+  /// Import the set methods from base class
   using BaseCharRanges<MergedCharRanges>::set;
   
   /// Insert a range
   constexpr void set(const std::pair<char,char>& head)
   {
-    const auto& [b,e]=head;
-    if(not std::is_constant_evaluated())
-      printf("Considering [%d,%d)\n",b,e);
+    /// Begin and end of the range to be inserted
+    const auto& [b,e]=
+      head;
+    // if(not std::is_constant_evaluated())
+    //   printf("Considering [%d,%d)\n",b,e);
     
     /// Current range, at the beginning set at the first range delimiter
     auto cur=
@@ -548,42 +557,43 @@ struct MergedCharRanges :
     while(cur!=ranges.end() and cur->second<b)
       cur++;
     
-    const size_t i=
-      std::distance(ranges.begin(),cur);
+    /// Index of the position where to insert, useful for debug
+    // const size_t i=
+    //   std::distance(ranges.begin(),cur);
     
     // Insert the beginning of the range if not present
     if(cur==ranges.end() or cur->second<b)
       {
-	if(not std::is_constant_evaluated())
-	  printf("Inserting [%d,%d) at %zu\n",b,e,i);
+	// if(not std::is_constant_evaluated())
+	//   printf("Inserting [%d,%d) at %zu\n",b,e,i);
 	ranges.insert(cur,{b,e});
       }
     else
       {
 	if(cur->first>b)
-	  {
-	    if(not std::is_constant_evaluated())
-	      printf("range %zu [%d,%d) extended left to ",i,cur->first,cur->second);
+	  // {
+	    // if(not std::is_constant_evaluated())
+	    //   printf("range %zu [%d,%d) extended left to ",i,cur->first,cur->second);
 	    cur->first=std::min(cur->first,b);
-	    if(not std::is_constant_evaluated())
-	      printf("[%d,%d)\n",cur->first,cur->second);
-	  }
+	    // if(not std::is_constant_evaluated())
+	    //   printf("[%d,%d)\n",cur->first,cur->second);
+	  // }
 	
 	if(cur->second<e)
 	  {
-	    if(not std::is_constant_evaluated())
-	      printf("range %zu [%d,%d) extended right to ",i,cur->first,cur->second);
+	    // if(not std::is_constant_evaluated())
+	    //   printf("range %zu [%d,%d) extended right to ",i,cur->first,cur->second);
 	    cur->second=e;
-	    if(not std::is_constant_evaluated())
-	      printf("[%d,%d)\n",cur->first,cur->second);
+	    // if(not std::is_constant_evaluated())
+	    //   printf("[%d,%d)\n",cur->first,cur->second);
 	    while(cur+1!=ranges.end() and cur->second>=(cur+1)->first)
 	      {
 		cur->second=std::max(cur->second,(cur+1)->second);
-		if(not std::is_constant_evaluated())
-		  {
-		    printf("extended right to [%d,%d)\n",cur->first,cur->second);
-		    printf("erasing [%d,%d)\n",(cur+1)->first,(cur+1)->second);
-		  }
+		// if(not std::is_constant_evaluated())
+		//   {
+		//     printf("extended right to [%d,%d)\n",cur->first,cur->second);
+		//     printf("erasing [%d,%d)\n",(cur+1)->first,(cur+1)->second);
+		//   }
 		cur=ranges.erase(cur+1)-1;
 	      }
 	  }
@@ -602,9 +612,22 @@ struct MergedCharRanges :
 /// Matches a set of chars in []
 constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
 {
-  constexpr std::pair<char,char> lower{'a','z'+1},upper{'A','Z'+1},digit{'0','9'+1};
-  constexpr auto alpha=std::make_tuple(lower,upper);
-  constexpr auto alnum=std::make_tuple(alpha,digit);
+  /// Lower alphabet chars
+  constexpr std::pair<char,char> lower{'a','z'+1};
+  
+  /// Capitalized alphabet chars
+  constexpr std::pair<char,char> upper{'A','Z'+1};
+  
+  /// Digits
+  constexpr std::pair<char,char> digit{'0','9'+1};
+  
+  /// Lower and upper chars
+  constexpr auto alpha=
+	      std::make_tuple(lower,upper);
+  
+  /// Lower and upper chars, and digits
+  constexpr auto alnum=
+	      std::make_tuple(alpha,digit);
   
   /// Keep track of the original point in case of needed backup
   std::string_view backup=
@@ -612,8 +635,8 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
   
   if(matchIn.matchChar('['))
     {
-      if(not std::is_constant_evaluated())
-	printf("matched [\n");
+      // if(not std::is_constant_evaluated())
+      // 	printf("matched [\n");
 	
       /// List of matchable chars
       MergedCharRanges matchableChars;
@@ -630,8 +653,8 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
 	{
 	  if(matchIn.matchStr(name))
 	    {
-	      if(not std::is_constant_evaluated())
-		printf("matched class %s\n",name.begin());
+	      // if(not std::is_constant_evaluated())
+	      // 	printf("matched class %s\n",name.begin());
 	      
 	      matchableChars.set(range);
 	      
@@ -644,6 +667,7 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
 	      return false;
 	};
       
+      /// Take note of whether something has been matched
       bool matched=true;
       while(matched)
 	{
@@ -662,29 +686,31 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
 			    "[:upper:]",upper,
 			    "[:xdigit:]","0123456789abcdefABCDEF"))
 	    {
-	      if(not std::is_constant_evaluated())
-		printf("matched no char class\n");
+	      // if(not std::is_constant_evaluated())
+	      // 	printf("matched no char class\n");
 	      
 	      if(const char b=matchIn.matchPossiblyEscapedCharNotIn("^]-"))
 		{
-		  if(not std::is_constant_evaluated())
-		    printf("matched char %c\n",b);
+		  // if(not std::is_constant_evaluated())
+		  //   printf("matched char %c\n",b);
 		  
+		  /// Take backup in case not matching
 		  std::string_view backup=
 		    matchIn.ref;
 		  
+		  /// Keep trace of whether something has been matched
 		  bool accepting=
 		    false;
 		  
 		  if(matchIn.matchChar('-'))
 		    {
-		      if(not std::is_constant_evaluated())
-			printf(" matched - to get char range\n");
+		      // if(not std::is_constant_evaluated())
+		      // 	printf(" matched - to get char range\n");
 		  
 		      if(const char e=matchIn.matchPossiblyEscapedCharNotIn("^]-"))
 			{
-			  if(not std::is_constant_evaluated())
-			    printf("  matched char range end %c\n",e);
+			  // if(not std::is_constant_evaluated())
+			  //   printf("  matched char range end %c\n",e);
 			  matchableChars.set(std::make_pair(b,e));
 			  accepting=true;
 			}
@@ -692,8 +718,8 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
 		  
 		  if(not accepting)
 		    {
-		      if(not std::is_constant_evaluated())
-			printf("no char range end, single char\n");
+		      // if(not std::is_constant_evaluated())
+		      // 	printf("no char range end, single char\n");
 		      matchableChars.set(b);
 		      matchIn.ref=backup;
 		    }
@@ -708,14 +734,16 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
       
       if(matchIn.matchChar(']'))
 	{
-	  if(not std::is_constant_evaluated())
-	    printf("matched ]\n");
+	  // if(not std::is_constant_evaluated())
+	  //   printf("matched ]\n");
 	  
+	  /// Result to be returned, containing a nested list of OR nodes
 	  std::optional<RegexParserNode> res;
 	  
 	  matchableChars.onAllRanges([&res](const char& b,
 					    const char& e)
 	  {
+	    /// First create a detached node
 	    auto tmp=
 	      RegexParserNode{RegexParserNode::Type::CHAR,{},b,(char)(e+1)};
 	    
@@ -745,7 +773,7 @@ constexpr std::optional<RegexParserNode> matchSubExpr(Matching& matchIn)
   if(matchIn.matchChar('('))
     if(std::optional<RegexParserNode> s=matchAndParsePossiblyOrredExpr(matchIn);s and matchIn.matchChar(')'))
       return s;
-
+  
   matchIn.ref=backup;
   
   return {};
