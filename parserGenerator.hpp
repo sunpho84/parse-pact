@@ -6,6 +6,43 @@
 #include <string_view>
 #include <vector>
 
+/// When destroyed, performs the action unless defused
+template <typename F>
+struct Bomb
+{
+  /// Action performed at destruction
+  F explodeAction;
+
+  /// State whether the bomb is ignited
+  bool ignited;
+  
+  /// Construct taking a funtion
+  constexpr Bomb(F&& explodeAction,
+		 const bool& ignited=true) :
+    explodeAction(explodeAction),ignited(ignited)
+  {
+  }
+  
+  /// Light up the bomb
+  constexpr void ignite()
+  {
+    ignited=false;
+  }
+  
+  /// Turns the bomb down
+  constexpr void defuse()
+  {
+    ignited=false;
+  }
+  
+  /// Destructor, making the bomb explode if not defused
+  constexpr ~Bomb()
+  {
+    if(ignited)
+      explodeAction();
+  }
+};
+
 /// Emit the error. Can be run only at compile time, so the error will
 /// be prompted at compile time if invoked in a constexpr
 inline void errorEmitter(const char* str)
@@ -51,6 +88,16 @@ struct Matching
   /// Reference to the string view holding the data
   std::string_view ref;
   
+  /// Returns a bomb, which rewinds the matcher if not defused
+  constexpr auto temptativeMatch(const bool ignited=false)
+  {
+    return Bomb([this,
+		 ref=this->ref]()
+    {
+      this->ref=ref;
+    },ignited);
+  }
+  
   /// Construct from a string view
   constexpr Matching(const std::string_view& in) :
     ref(in)
@@ -81,7 +128,7 @@ struct Matching
     
     if(accepting)
       ref.remove_prefix(1);
-	
+    
     return accepting;
   }
   
@@ -98,9 +145,9 @@ struct Matching
   /// Match string
   constexpr bool matchStr(std::string_view str)
   {
-    /// Store backup in case not accepted
-    std::string_view backup=
-      ref;
+    /// Rewinds if not matched
+    auto undoer=
+      temptativeMatch();
     
     /// Accept to begin with
     bool accepting=
@@ -116,8 +163,8 @@ struct Matching
 	  str.remove_prefix(1);
 	}
     
-    if(not accepting)
-      ref=backup;
+    if(accepting)
+      undoer.defuse();
     
     return accepting;
   }
@@ -158,6 +205,40 @@ struct Matching
     
     return '\0';
   }
+  
+  /// Matches a line of comment beginning with //
+  constexpr bool matchLineComment()
+  {
+    /// Store the end of the line delimiter
+    constexpr std::string_view filt=
+      std::string_view("\n\r");
+    
+    /// Result to be returned
+    bool res;
+    if((res=matchStr("//")))
+      while(not ref.empty() and filt.find_first_of(ref.front())==filt.npos)
+	ref.remove_prefix(1);
+    
+    return res;
+  }
+  
+  /// Matches a block of text crossing lines if needed
+  constexpr bool matchBlockComment()
+  {
+    bool res;
+    
+    if((res=matchStr("/*")))
+      while(not ref.empty() and not (res=(matchChar('*') and matchChar('/'))))
+	ref.remove_prefix(1);
+    
+    return res;
+  }
+  
+  // constexpr char matchWhiteSpaceOrComments()
+  // {
+  //   while(matchAnyCharIn(" \f\n\r\t\v") or matchLineComment() or matchBlockComment())
+      
+  // }
   
   /// Forbids taking a copy
   Matching(const Matching&)=delete;
@@ -661,10 +742,10 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
   constexpr auto alnum=
 	      std::make_tuple(alpha,digit);
   
-  /// Keep track of the original point in case of needed backup
-  std::string_view backup=
-    matchIn.ref;
-  
+  /// Rewinds if not matched
+  auto undoer=
+    matchIn.temptativeMatch();
+    
   if(matchIn.matchChar('['))
     {
       /// Take whether the range is negated
@@ -730,9 +811,9 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
 		  // if(not std::is_constant_evaluated())
 		  //   printf("matched char %c\n",b);
 		  
-		  /// Take backup in case not matching
-		  std::string_view backup=
-		    matchIn.ref;
+		  /// Rewinds if not matched
+		  auto undoer=
+		    matchIn.temptativeMatch();
 		  
 		  /// Keep trace of whether something has been matched
 		  bool accepting=
@@ -752,12 +833,13 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
 			}
 		    }
 		  
-		  if(not accepting)
+		  if(accepting)
+		    undoer.defuse();
+		  else
 		    {
 		      // if(not std::is_constant_evaluated())
 		      // 	printf("no char range end, single char\n");
 		      matchableChars.set(b);
-		      matchIn.ref=backup;
 		    }
 		}
 	      else
@@ -792,12 +874,11 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
 	      res=std::move(tmp);
 	  });
 	  
+	  undoer.defuse();
+	  
 	  return res;
 	}
     }
-  
-  matchIn.ref=
-    backup;
   
   return {};
 }
@@ -805,15 +886,17 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
 /// Matches a subexpression
 constexpr std::optional<RegexParserNode> matchSubExpr(Matching& matchIn)
 {
-  /// Keep track of the original point in case of needed backup
-  std::string_view backup=
-    matchIn.ref;
-  
+  /// Rewinds if not matched
+  auto undoer=
+    matchIn.temptativeMatch();
+    
   if(matchIn.matchChar('('))
     if(std::optional<RegexParserNode> s=matchAndParsePossiblyOrredExpr(matchIn);s and matchIn.matchChar(')'))
-      return s;
-  
-  matchIn.ref=backup;
+      {
+	undoer.defuse();
+	
+	return s;
+      }
   
   return {};
 }
@@ -878,14 +961,17 @@ constexpr std::optional<RegexParserNode> matchAndParsePossiblyOrredExpr(Matching
   std::optional<RegexParserNode> lhs=
     matchAndParsePossiblyAndedExpr(matchIn);
   
-  /// Keep track of the original point in case of needed backup
-  std::string_view backup=matchIn.ref;
-  
+  /// Rewinds if not matched
+  auto undoer=
+    matchIn.temptativeMatch();
+    
   if(matchIn.matchChar('|'))
     if(std::optional<RegexParserNode> rhs=matchAndParsePossiblyAndedExpr(matchIn))
-      return RegexParserNode{RegexParserNode::Type::OR,{std::move(*lhs),std::move(*rhs)}};
-  
-  matchIn.ref=backup;
+      {
+	undoer.defuse();
+	
+	return RegexParserNode{RegexParserNode::Type::OR,{std::move(*lhs),std::move(*rhs)}};
+      }
   
   return lhs;
 }
