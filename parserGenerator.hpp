@@ -89,12 +89,14 @@ struct Matching
   std::string_view ref;
   
   /// Returns a bomb, which rewinds the matcher if not defused
-  constexpr auto temptativeMatch(const bool ignited=false)
+  constexpr auto temptativeMatch(const bool ignited=true)
   {
     return Bomb([this,
-		 ref=this->ref]()
+		 oldRef=this->ref]()
     {
-      this->ref=ref;
+      // if(not std::is_constant_evaluated())
+      // 	printf("putting back ref %s->%s\n",this->ref.begin(),oldRef.begin());
+      this->ref=oldRef;
     },ignited);
   }
   
