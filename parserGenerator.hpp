@@ -199,10 +199,15 @@ struct Matching
 	    const char c=
 	      filt[pos];
 	    
+	    // if(not std::is_constant_evaluated())
+	    //   printf("matched char '%c'\n",c);
 	    ref.remove_prefix(1);
 	    
 	    return c;
 	  }
+	
+	// if(not std::is_constant_evaluated())
+	//   printf("not matched anything with %c in the filtering list %s\n",ref.front(),filt.begin());
       }
     
     return '\0';
@@ -218,8 +223,24 @@ struct Matching
     /// Result to be returned
     bool res;
     if((res=matchStr("//")))
-      while(not ref.empty() and filt.find_first_of(ref.front())==filt.npos)
-	ref.remove_prefix(1);
+      {
+	// if(not std::is_constant_evaluated())
+	//   printf("matched line comment\n");
+	
+	while(not ref.empty() and filt.find_first_of(ref.front())==filt.npos)
+	  {
+	    // if(not std::is_constant_evaluated())
+	    //   printf("matched %c in line comment\n",ref.front());
+	    ref.remove_prefix(1);
+	  }
+	
+	// if(not std::is_constant_evaluated())
+	//   printf("matched line comment end\n");
+      }
+    // else
+    //   if(not std::is_constant_evaluated())
+    // 	if(not ref.empty())
+    // 	  printf("not matched anything with %c as beginning of line comment\n",ref.front());
     
     return res;
   }
@@ -230,17 +251,39 @@ struct Matching
     bool res;
     
     if((res=matchStr("/*")))
-      while(not ref.empty() and not (res=(matchChar('*') and matchChar('/'))))
-	ref.remove_prefix(1);
+      {
+	// if(not std::is_constant_evaluated())
+	//   printf("matched beginning of block comment\n");
+	
+	while(not ref.empty() and not (res=(matchChar('*') and matchChar('/'))))
+	  {
+	    // if(not std::is_constant_evaluated())
+	    //   printf("discarding '%c'\n",ref.front());
+	    ref.remove_prefix(1);
+	  }
+	
+	// if(not std::is_constant_evaluated())
+	//   if(res)
+	//     printf("matched block comment end\n");
+      }
+    // else
+    //   if(not std::is_constant_evaluated())
+    // 	if(not ref.empty())
+    // 	  printf("not matched %c as beginning of block comment\n",ref.front());
     
     return res;
   }
   
-  // constexpr char matchWhiteSpaceOrComments()
-  // {
-  //   while(matchAnyCharIn(" \f\n\r\t\v") or matchLineComment() or matchBlockComment())
-      
-  // }
+  /// Match whitespaces, line and block comments
+  constexpr bool matchWhiteSpaceOrComments()
+  {
+    bool res=false;
+    
+    while(matchAnyCharIn(" \f\n\r\t\v") or matchLineComment() or matchBlockComment())
+      res=true;
+    
+    return res;
+  }
   
   /// Forbids taking a copy
   Matching(const Matching&)=delete;

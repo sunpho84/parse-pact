@@ -16,7 +16,11 @@ constexpr void test()
 
 int main(int narg,char** arg)
 {
-   test();
+  Matching m("/* *ciao  d* \n mondo */    // come va \n qui bene");
+
+    printf("matched: %d %s\n",m.matchWhiteSpaceOrComments(),m.ref.begin());
+  
+  // test();
   
   // Matching m("[a-gi-me-j]");
   // auto n=matchBracketExpr(m);
