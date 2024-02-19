@@ -67,6 +67,121 @@ struct StaticPolymorphic
   }
 };
 
+///Matches a single char condition
+static constexpr bool charMatches(const char& c,
+				  const char& m)
+{
+  return c==m;
+}
+
+///Matches either char of a string
+static constexpr bool charMatches(const char& c,
+				  const char* str)
+{
+  while(*str!='\0')
+    if(*(str++)==c)
+      return true;
+  
+  return false;
+}
+
+/// Matches a range
+static constexpr bool charMatches(const char& c,
+				  const std::pair<char,char>& range)
+{
+  return c>=range.first and c<range.second;
+}
+
+/// Matches either conditions of a tuple
+template <typename...Cond>
+static constexpr bool charMatches(const char& c,
+				  const std::tuple<Cond...>& conds)
+{
+  return std::apply([c](const Cond&...cond)
+  {
+    return (charMatches(c,cond) or ...);
+  },conds);
+}
+
+/// Collect all info on char classes
+struct CharClasses
+{
+  /// Lower alphabet chars
+  static constexpr std::pair<char,char> lower{'a','z'+1};
+  
+  /// Capitalized alphabet chars
+  static constexpr std::pair<char,char> upper{'A','Z'+1};
+  
+  /// Digits
+  static constexpr std::pair<char,char> digit{'0','9'+1};
+  
+  /// Lower and upper chars
+  static constexpr auto alpha=
+    std::make_tuple(lower,upper);
+  
+  /// Lower and upper chars, and digits
+  static constexpr auto alnum=
+    std::make_tuple(alpha,digit);
+  
+  /// Elements which can be contained inside a word
+  static constexpr auto word=
+    std::make_tuple(alnum,'_');
+  
+  /// Blank spaces
+  static constexpr auto blank=
+    " \t";
+  
+  /// Control characters
+  static constexpr auto cntrl=
+    std::make_tuple(std::make_pair((char)0x01,(char)(0x1f+1)),std::make_pair((char)0x7f,(char)(0x7f+1)));
+  
+  /// Combination of alnum and punct
+  static constexpr auto graph=
+    std::make_pair((char)0x21,(char)(0x7e +1));
+  
+  /// Combination of graph and white space
+  static constexpr auto print=
+    std::make_pair((char)0x20,(char)(0x7e +1));
+  
+  /// All chars which refer to punctation
+  static constexpr auto punct=
+    "-!\"#$%&'()*+,./:;<=>?@[\\]_`{|}~";
+  
+  /// All spaces
+  static constexpr auto space=
+    " \t\r\n";
+  
+  /// Hex digit
+  static constexpr auto xdigit=
+    "0123456789abcdefABCDEF";
+  
+  /// Collect all classes in a tuple
+  static constexpr auto classes=
+    std::make_tuple(std::make_pair("[:alnum:]",alnum),
+		    std::make_pair("[:word:]",word),
+		    std::make_pair("[:alpha:]",alpha),
+		    std::make_pair("[:blank:]",blank),
+		    std::make_pair("[:cntrl:]",cntrl),
+		    std::make_pair("[:digit:]",digit),
+		    std::make_pair("[:graph:]",graph),
+		    std::make_pair("[:lower:]",lower),
+		    std::make_pair("[:print:]",print),
+		    std::make_pair("[:punct:]",punct),
+		    std::make_pair("[:space:]",space),
+		    std::make_pair("[:upper:]",upper),
+		    std::make_pair("[:xdigit:]",xdigit));
+  
+  /// Accessor to the tuple
+  enum ClassId{ALNUM,WORD,ALPHA,BLANK,CNTRL,DIGIT,GRAPH,LOWER,PRINT,PUNCT,SPACE,UPPER,XDIGIT};
+  
+  /// Detect if the char is in the given class
+  template <ClassId ID>
+  static constexpr bool charIsInClass(const char& c)
+  {
+    return charMatches(c,std::get<ID>(classes).second);
+  }
+};
+
 /// Return the escaped counterpart of the escaped part in a few cases, or the char itself
 constexpr char maybeEscape(const char& c)
 {
@@ -217,17 +332,18 @@ struct Matching
   constexpr bool matchLineComment()
   {
     /// Store the end of the line delimiter
-    constexpr std::string_view filt=
+    constexpr std::string_view lineEndIds=
       std::string_view("\n\r");
     
     /// Result to be returned
     bool res;
+    
     if((res=matchStr("//")))
       {
 	// if(not std::is_constant_evaluated())
 	//   printf("matched line comment\n");
 	
-	while(not ref.empty() and filt.find_first_of(ref.front())==filt.npos)
+	while(not ref.empty() and lineEndIds.find_first_of(ref.front())==lineEndIds.npos)
 	  {
 	    // if(not std::is_constant_evaluated())
 	    //   printf("matched %c in line comment\n",ref.front());
@@ -248,6 +364,7 @@ struct Matching
   /// Matches a block of text crossing lines if needed
   constexpr bool matchBlockComment()
   {
+    /// Result to be returned
     bool res;
     
     if((res=matchStr("/*")))
@@ -277,12 +394,36 @@ struct Matching
   /// Match whitespaces, line and block comments
   constexpr bool matchWhiteSpaceOrComments()
   {
+    /// Result to be returned
     bool res=false;
     
     while(matchAnyCharIn(" \f\n\r\t\v") or matchLineComment() or matchBlockComment())
       res=true;
     
     return res;
+  }
+  
+  /// Matches an identifier
+  constexpr std::string_view matchId()
+  {
+    auto undoer=
+      this->temptativeMatch();
+    
+    matchWhiteSpaceOrComments();
+    
+    if(std::string_view beg=ref;
+       (not ref.empty()) and charMatches(ref.front(),std::make_tuple(CharClasses::alpha,'_')))
+      {
+	ref.remove_prefix(1);
+	while((not ref.empty()) and CharClasses::charIsInClass<CharClasses::ALNUM>(ref.front()))
+	  {
+	    // printf("Matched %c\n",ref.front());
+	    ref.remove_prefix(1);
+	  }
+	return {beg.begin(),ref.begin()};
+      }
+    
+    return {};
   }
   
   /// Forbids taking a copy
@@ -770,23 +911,6 @@ struct MergedCharRanges :
 /// Matches a set of chars in []
 constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
 {
-  /// Lower alphabet chars
-  constexpr std::pair<char,char> lower{'a','z'+1};
-  
-  /// Capitalized alphabet chars
-  constexpr std::pair<char,char> upper{'A','Z'+1};
-  
-  /// Digits
-  constexpr std::pair<char,char> digit{'0','9'+1};
-  
-  /// Lower and upper chars
-  constexpr auto alpha=
-	      std::make_tuple(lower,upper);
-  
-  /// Lower and upper chars, and digits
-  constexpr auto alnum=
-	      std::make_tuple(alpha,digit);
-  
   /// Rewinds if not matched
   auto undoer=
     matchIn.temptativeMatch();
@@ -809,16 +933,15 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
       const auto matchClass=
 	[&matchableChars,
 	 &matchIn](const auto& matchClass,
-		   const std::string_view& name,
 		   const auto& range,
 		   const auto&...tail)
 	{
-	  if(matchIn.matchStr(name))
+	  if(matchIn.matchStr(range.first))
 	    {
 	      // if(not std::is_constant_evaluated())
 	      // 	printf("matched class %s\n",name.begin());
 	      
-	      matchableChars.set(range);
+	      matchableChars.set(range.second);
 	      
 	      return true;
 	    }
@@ -833,20 +956,10 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
       bool matched=true;
       while(matched)
 	{
-	  if(not matchClass(matchClass,
-			    "[:alnum:]",alnum,
-			    "[:word:]",std::make_tuple(alnum,'_'),
-			    "[:alpha:]",alpha,
-			    "[:blank:]"," \t",
-			    "[:cntrl:]",std::make_tuple(std::make_pair((char)0x01,(char)(0x1f+1)),std::make_pair((char)0x7f,(char)(0x7f+1))),
-			    "[:digit:]",digit,
-			    "[:graph:]",std::make_pair((char)0x21,(char)(0x7e +1)),
-			    "[:lower:]",lower,
-			    "[:print:]",std::make_pair((char)0x20,(char)(0x7e +1)),
-			    "[:punct:]","-!\"#$%&'()*+,./:;<=>?@[\\]_`{|}~",
-			    "[:space:]"," \t\r\n",
-			    "[:upper:]",upper,
-			    "[:xdigit:]","0123456789abcdefABCDEF"))
+	  if(not std::apply([&matchClass](const auto&...classes)
+	  {
+	    return matchClass(matchClass,classes...);
+	  },CharClasses::classes))
 	    {
 	      // if(not std::is_constant_evaluated())
 	      // 	printf("matched no char class\n");

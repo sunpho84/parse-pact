@@ -19,7 +19,9 @@ int main(int narg,char** arg)
   Matching m("/* *ciao  d* \n mondo */    // come va \n qui bene");
 
     printf("matched: %d %s\n",m.matchWhiteSpaceOrComments(),m.ref.begin());
-  
+    
+    if(auto id=m.matchId();not id.empty())
+      printf("Matched id: \"%.*s\"\n",(int)id.size(),id.begin());
   // test();
   
   // Matching m("[a-gi-me-j]");
