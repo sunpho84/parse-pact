@@ -17,7 +17,7 @@ See the [development notes](doc/develop.md)
 
 ## Example
 In the following example we show the regex parser in action, detecting a json real number, at compile time
-```
+```c++
 #include <parserGenerator.hpp>
 
 int main()
