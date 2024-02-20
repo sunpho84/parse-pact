@@ -14,3 +14,28 @@ aim is to put everything in a single file.
 generator](https://github.com/cwbaker/lalr/) by Charles Baker.
 
 See the [development notes](doc/develop.md)
+
+## Example
+In the following example we show the regex parser in action, detecting a json real number, at compile time
+```
+#include <parserGenerator.hpp>
+
+int main()
+{
+  /// Integer number in the json format
+  static constexpr char jsonInt[]="(\\+|\\-)?[0-9]+";
+  
+  /// Real number in the json format
+  static constexpr char jsonReal[]="(\\+|\\-)?[0-9]+(\\.[0-9]+)?((e|E)(\\+|\\-)?[0-9]+)?";
+  
+  /// Estimate the constexpr parser size
+  constexpr auto parserSize=estimateRegexParserSize(jsonInt,jsonReal);
+  
+  /// Creates the parser
+  constexpr auto parser=createParserFromRegex<parserSize>(jsonInt,jsonReal);
+  
+  static_assert(*parser.parse("-332.235e-34")==1);
+  
+  return 0;
+}
+```

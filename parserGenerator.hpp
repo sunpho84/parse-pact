@@ -1,6 +1,7 @@
 #include <array>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <optional>
 #include <string_view>
@@ -47,7 +48,10 @@ struct Bomb
 /// be prompted at compile time if invoked in a constexpr
 inline void errorEmitter(const char* str)
 {
-  fprintf(stderr,"Error: %s",str);
+  fprintf(stderr,"Error: %s\n",str);
+  if(not std::is_constant_evaluated())
+    exit(1);
+  
 }
 
 /// Implements static polymorphysm via CRTP, while we wait for C++-23
@@ -68,14 +72,14 @@ struct StaticPolymorphic
 };
 
 ///Matches a single char condition
-static constexpr bool charMatches(const char& c,
+static constexpr bool charMultiMatches(const char& c,
 				  const char& m)
 {
   return c==m;
 }
 
 ///Matches either char of a string
-static constexpr bool charMatches(const char& c,
+static constexpr bool charMultiMatches(const char& c,
 				  const char* str)
 {
   while(*str!='\0')
@@ -86,7 +90,7 @@ static constexpr bool charMatches(const char& c,
 }
 
 /// Matches a range
-static constexpr bool charMatches(const char& c,
+static constexpr bool charMultiMatches(const char& c,
 				  const std::pair<char,char>& range)
 {
   return c>=range.first and c<range.second;
@@ -94,12 +98,12 @@ static constexpr bool charMatches(const char& c,
 
 /// Matches either conditions of a tuple
 template <typename...Cond>
-static constexpr bool charMatches(const char& c,
+static constexpr bool charMultiMatches(const char& c,
 				  const std::tuple<Cond...>& conds)
 {
   return std::apply([c](const Cond&...cond)
   {
-    return (charMatches(c,cond) or ...);
+    return (charMultiMatches(c,cond) or ...);
   },conds);
 }
 
@@ -178,7 +182,7 @@ struct CharClasses
   template <ClassId ID>
   static constexpr bool charIsInClass(const char& c)
   {
-    return charMatches(c,std::get<ID>(classes).second);
+    return charMultiMatches(c,std::get<ID>(classes).second);
   }
 };
 
@@ -403,16 +407,47 @@ struct Matching
     return res;
   }
   
+  /// Matches a literal, introduced by ' and finished by ', with no line break
+  constexpr std::string_view matchLiteral()
+  {
+    auto undoer=
+      this->temptativeMatch();
+    
+    if(std::string_view beg=ref;
+       (not ref.empty()) and matchChar('\''))
+      {
+	bool escaped{};
+	char c{};
+	
+	do
+	  {
+	    if(ref.empty() or matchAnyCharIn("\n\r"))
+	      errorEmitter("Unterminated literal");
+	    
+	    escaped=(c=='\\');
+	    c=matchAnyChar();
+	  }
+	while(escaped or c!='\'');
+	
+	if(beg.begin()+1==ref.begin()-1)
+	  errorEmitter("Empty literal");
+	
+	undoer.defuse();
+	
+	return {beg.begin()+1,ref.begin()-1};
+      }
+    
+    return {};
+  }
+  
   /// Matches an identifier
   constexpr std::string_view matchId()
   {
     auto undoer=
       this->temptativeMatch();
     
-    matchWhiteSpaceOrComments();
-    
     if(std::string_view beg=ref;
-       (not ref.empty()) and charMatches(ref.front(),std::make_tuple(CharClasses::alpha,'_')))
+       (not ref.empty()) and charMultiMatches(ref.front(),std::make_tuple(CharClasses::alpha,'_')))
       {
 	ref.remove_prefix(1);
 	while((not ref.empty()) and CharClasses::charIsInClass<CharClasses::ALNUM>(ref.front()))
@@ -1426,7 +1461,7 @@ struct DynamicRegexParser :
       }
     
   /// Gets the parameters needed to build the constexpr parser
-    constexpr RegexMachineSpecs getSpecs() const
+    constexpr RegexMachineSpecs getSizes() const
     {
     return {.nDStates=dStates.size(),.nTranstitions=transitions.size()};
   }
@@ -1467,7 +1502,175 @@ constexpr auto createParserFromRegex(const T*...str)
     errorEmitter("Unable to parse the regex");
   
   if constexpr(RPS.isNull())
-    return DynamicRegexParser(*parseTree).getSpecs();
+    return DynamicRegexParser(*parseTree);
   else
     return ConstexprRegexParser<RPS>(*parseTree);
 }
+
+/// Create parser from regexp
+template <typename...T>
+requires(std::is_same_v<char,T> and ...)
+constexpr auto estimateRegexParserSize(const T*...str)
+{
+  return createParserFromRegex(str...).getSizes();
+}
+
+/////////////////////////////////////////////////////////////////
+
+struct GrammarSymbol;
+
+struct GrammarProduction
+{
+  GrammarSymbol* lhs;
+  
+  std::vector<GrammarSymbol*> rhs;
+  
+  const GrammarSymbol* precedenceSymbol;
+};
+
+struct GrammarSymbol
+{
+  std::string_view matchingString;
+  
+  enum class Type{NULL_SYMBOL,TERMINAL_SYMBOL,NON_TERMINAL_SYMBOL,END_SYMBOL};
+  
+  Type type;
+  
+  enum class Associativity{NONE,LEFT,RIGHT};
+  
+  bool isRegex;
+  
+  int precedence;
+  
+  std::vector<GrammarProduction*> productions;
+};
+
+struct Grammar
+{
+  std::string_view id;
+  
+  std::vector<GrammarSymbol> symbols;
+  
+  size_t iStartSymbol;
+  
+  size_t iEndSymbol;
+  
+  size_t iErrorSymbol;
+  
+  size_t iWhitespaceSymbol;
+  
+  std::vector<GrammarProduction> productions;
+  
+  std::vector<std::string_view> whiteSpaceTokens;
+  
+  GrammarSymbol::Associativity currentAssociativity;
+  
+  constexpr GrammarSymbol& insertOrFindSymbol(const std::string_view& name,
+					      const GrammarSymbol::Type& type,
+					      const bool& isRegex,
+					      const int& precedence)
+  {
+    if(auto ref=
+       std::ranges::find_if(symbols,
+			    [&name](const GrammarSymbol& s)
+			    {
+			      return s.matchingString==name;
+			    });ref!=symbols.end())
+      {
+	if(ref->isRegex!=isRegex or
+	   ref->precedence!=precedence)
+	  errorEmitter("symbol is already present with different pars");
+	
+	return *ref;
+      }
+    else
+      return symbols.emplace_back(name,type,isRegex,precedence);
+  }
+  
+  constexpr std::optional<GrammarSymbol> matchAndParseSybol(Matching& m)
+  {
+    m.matchWhiteSpaceOrComments();
+    
+    if(m.matchStr("error"))
+         return symbols[iErrorSymbol];
+    else if(auto l=m.matchLiteral();not l.empty())
+      return insertOrFindSymbol(l,GrammarSymbol::Type::TERMINAL_SYMBOL,false, 0/*precedence*/);
+    // else if(auto r=m.matchRegex()) ;
+    // else if(auto i=m.matchId();not i.empty()) ;
+
+    return {};
+  }
+  
+  constexpr bool matchAndParseAssociativityStatement(Matching& matchin)
+  {
+    /// Undo if not matching
+    auto undoer=
+      matchin.temptativeMatch();
+    
+    using enum GrammarSymbol::Associativity;
+    
+    constexpr std::array<std::pair<std::string_view,GrammarSymbol::Associativity>,3>
+		possibleAssociativities{std::make_pair("%none",NONE),
+					std::make_pair("%left",LEFT),
+					std::make_pair("%right",RIGHT)};
+    
+    size_t iAss=0;
+    while(iAss<possibleAssociativities.size() and not matchin.matchStr(possibleAssociativities[iAss].first))
+      iAss++;
+    
+    if(iAss!=possibleAssociativities.size())
+      {
+	currentAssociativity=possibleAssociativities[iAss].second;
+	
+#warning	while(auto m=matchAndParseSymbol())
+	  
+	
+	return true;
+      }
+    
+    return false;
+  }
+  
+  constexpr Grammar(const std::string_view& str) :
+    currentAssociativity(GrammarSymbol::Associativity::NONE)
+  {
+    using enum GrammarSymbol::Type;
+    
+    // Adds generic symboles
+    for(const auto& [name,type,i] :
+	  {std::make_tuple(".start",NON_TERMINAL_SYMBOL,&iStartSymbol),
+	   {".end",END_SYMBOL,&iEndSymbol},
+	   {".error",NULL_SYMBOL,&iErrorSymbol},
+	   {".whitespace",NULL_SYMBOL,&iWhitespaceSymbol}})
+      {
+	*i=symbols.size();
+	symbols.emplace_back(name,type,false,0);
+      }
+    
+    GrammarSymbol::Associativity associativity{};
+    
+    Matching match(str);
+    
+    match.matchWhiteSpaceOrComments();
+    id=match.matchId();
+
+    if(not id.empty())
+      {
+	printf("Matched grammar: \"%.*s\"\n",(int)id.size(),id.begin());
+	if(match.matchChar('{'))
+	  {
+#warning ddd
+	    // do match.matchWhiteSpaceOrComments();
+	    // while(matchAndParseAssociativityStatement(match) or
+	    // 	  matchAndParseWhitespaceDefinition() or
+	    // 	  matchAndParseProduction());
+	    
+	    if(match.matchChar('}'))
+	      return ;
+	  }
+      }
+  }
+};
+
+
+/// Create parser from regexp
