@@ -411,14 +411,14 @@ struct Matching
     return res;
   }
   
-  /// Matches a literal, introduced by ' and finished by ', with no line break
-  constexpr std::string_view matchLiteral()
+  /// Matches a literal or regex, introduced and finished by delim, with no line break
+  constexpr std::string_view matchLiteralOrRegex(const char& delim)
   {
     auto undoer=
       this->temptativeMatch();
     
     if(std::string_view beg=ref;
-       (not ref.empty()) and matchChar('\''))
+       (not ref.empty()) and matchChar(delim))
       {
 	bool escaped{};
 	char c{};
@@ -426,15 +426,15 @@ struct Matching
 	do
 	  {
 	    if(ref.empty() or matchAnyCharIn("\n\r"))
-	      errorEmitter("Unterminated literal");
+	      errorEmitter("Unterminated literal or regex");
 	    
 	    escaped=(c=='\\');
 	    c=matchAnyChar();
 	  }
-	while(escaped or c!='\'');
+	while(escaped or c!=delim);
 	
 	if(beg.begin()+1==ref.begin()-1)
-	  errorEmitter("Empty literal");
+	  errorEmitter("Empty literal or regex");
 	
 	undoer.defuse();
 	
@@ -459,6 +459,9 @@ struct Matching
 	    // printf("Matched %c\n",ref.front());
 	    ref.remove_prefix(1);
 	  }
+	
+	undoer.defuse();
+	
 	return {beg.begin(),ref.begin()};
       }
     
@@ -1563,11 +1566,13 @@ struct Grammar
     
     if(m.matchStr("error"))
          return symbols[iErrorSymbol];
-    else if(auto l=m.matchLiteral();not l.empty())
-      return insertOrFindSymbol(l,GrammarSymbol::Type::TERMINAL_SYMBOL,false, 0/*precedence*/);
-    // else if(auto r=m.matchRegex()) ;
-    // else if(auto i=m.matchId();not i.empty()) ;
-
+    else if(auto l=m.matchLiteralOrRegex('\'');not l.empty())
+      return insertOrFindSymbol(l,GrammarSymbol::Type::TERMINAL_SYMBOL,currentAssociativity,false,currentPrecedence);
+    else if(auto r=m.matchLiteralOrRegex('"');not r.empty())
+      return insertOrFindSymbol(r,GrammarSymbol::Type::TERMINAL_SYMBOL,currentAssociativity,true,currentPrecedence);
+    else if(auto i=m.matchId();not i.empty())
+      return insertOrFindSymbol(i,GrammarSymbol::Type::NON_TERMINAL_SYMBOL,currentAssociativity,false,currentPrecedence);
+				
     return {};
   }
   
