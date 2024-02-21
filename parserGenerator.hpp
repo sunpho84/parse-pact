@@ -2,6 +2,8 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <iomanip>
+#include <iostream>
 #include <limits>
 #include <optional>
 #include <string_view>
@@ -13,7 +15,7 @@ struct Bomb
 {
   /// Action performed at destruction
   F explodeAction;
-
+  
   /// State whether the bomb is ignited
   bool ignited;
   
@@ -52,6 +54,14 @@ inline void errorEmitter(const char* str)
   if(not std::is_constant_evaluated())
     exit(1);
   
+}
+
+/// Print to terminal if not evaluated at compile time
+template <typename...Args>
+constexpr void diagnostic(Args&&...args)
+{
+  if(not std::is_constant_evaluated())
+    ((std::cout<<args),...);
 }
 
 /// Implements static polymorphysm via CRTP, while we wait for C++-23
@@ -213,8 +223,7 @@ struct Matching
     return Bomb([this,
 		 oldRef=this->ref]()
     {
-      // if(not std::is_constant_evaluated())
-      // 	printf("putting back ref %s->%s\n",this->ref.begin(),oldRef.begin());
+      // diagnostic("putting back ref ",this->ref.begin(),"->",oldRef.begin(),"\n");
       this->ref=oldRef;
     },ignited);
   }
@@ -277,8 +286,7 @@ struct Matching
     while(accepting and (not (str.empty() or ref.empty())))
       if((accepting&=ref.starts_with(str.front())))
 	{
-	  // if(not std::is_constant_evaluated())
-	  //   printf("matched %c\n",str.front());
+	  // diagnostic("matched ",str.front(),"\n");
 	  
 	  ref.remove_prefix(1);
 	  str.remove_prefix(1);
@@ -318,15 +326,13 @@ struct Matching
 	    const char c=
 	      filt[pos];
 	    
-	    // if(not std::is_constant_evaluated())
-	    //   printf("matched char '%c'\n",c);
+	    // diagnostic("matched char '",c,"'\n");
 	    ref.remove_prefix(1);
 	    
 	    return c;
 	  }
 	
-	// if(not std::is_constant_evaluated())
-	//   printf("not matched anything with %c in the filtering list %s\n",ref.front(),filt.begin());
+	// diagnostic("not matched anything with ",ref.front()," in the filtering list ",filt.begin(),"\n");
       }
     
     return '\0';
@@ -344,18 +350,15 @@ struct Matching
     
     if((res=matchStr("//")))
       {
-	// if(not std::is_constant_evaluated())
-	//   printf("matched line comment\n");
+	// diagnostic("matched line comment\n");
 	
 	while(not ref.empty() and lineEndIds.find_first_of(ref.front())==lineEndIds.npos)
 	  {
-	    // if(not std::is_constant_evaluated())
-	    //   printf("matched %c in line comment\n",ref.front());
+	    // diagnostic("matched ",ref.front()," in line comment\n");
 	    ref.remove_prefix(1);
 	  }
 	
-	// if(not std::is_constant_evaluated())
-	//   printf("matched line comment end\n");
+	// diagnostic("matched line comment end\n");
       }
     // else
     //   if(not std::is_constant_evaluated())
@@ -373,13 +376,11 @@ struct Matching
     
     if((res=matchStr("/*")))
       {
-	// if(not std::is_constant_evaluated())
-	//   printf("matched beginning of block comment\n");
+	// diagnostic("matched beginning of block comment\n");
 	
 	while(not ref.empty() and not (res=(matchChar('*') and matchChar('/'))))
 	  {
-	    // if(not std::is_constant_evaluated())
-	    //   printf("discarding '%c'\n",ref.front());
+	    // diagnostic("discarding '",ref.front(),"'\n");
 	    ref.remove_prefix(1);
 	  }
 	
@@ -403,6 +404,9 @@ struct Matching
     
     while(matchAnyCharIn(" \f\n\r\t\v") or matchLineComment() or matchBlockComment())
       res=true;
+    
+    if(res)
+      diagnostic("matched whitespace or comments\n");
     
     return res;
   }
@@ -789,12 +793,10 @@ struct UnmergedCharRanges :
     if(cur==ranges.end() or cur->first!=e)
       ranges.insert(cur,{e,startNewRange});
     
-    // if(not std::is_constant_evaluated())
-    //   {
-    // 	printf("  new range after inserting [%d;%d): \n",b,e);
+    // diagnostic("  new range after inserting [",b,";",e,"): \n");
     // 	for(const auto& [b,e] : ranges)
-    // 	  printf("    r: %d %d\n",b,e);
-    // 	printf("\n");
+    // 	  diagnostic("    r: [",b,";",e,")\n");
+    // 	diagnostic("\n");
     //   }
   }
   
@@ -802,9 +804,8 @@ struct UnmergedCharRanges :
   template <typename F>
   constexpr void onAllRanges(const F& f) const
   {
-    // if(not std::is_constant_evaluated())
     //   for(const auto& [b,e] : ranges)
-    // 	printf("    r: %d %d\n",b,e);
+    // 	diagnostic("    r: [",b,";",e,")\n");
     
     for(size_t iRangeBeg=0;iRangeBeg+1<ranges.size();iRangeBeg++)
       {
@@ -859,15 +860,12 @@ struct MergedCharRanges :
     if(const char m=std::numeric_limits<char>::max();prevEnd<m)
       negatedRanges.push_back({prevEnd,m});
     
-    // if(not std::is_constant_evaluated())
-    //   {
-    // 	printf("range:\n");
+    // 	diagnostic("range:\n");
     // 	for(const auto& [b,e] : ranges)
-    // 	  printf(" [%d,%d)\n",b,e);
-    // 	printf("negated range:\n");
+    // 	  diagnostic(" [",b,";",e,")\n");
+    // 	diagnostic("negated range:\n");
     // 	for(const auto& [b,e] : negatedRanges)
-    // 	  printf(" [%d,%d)\n",b,e);
-    //   }
+    // 	  diagnostic(" [",b,";",e,")\n");
     
     // Replaces the range with the negated one
     ranges=
@@ -880,8 +878,7 @@ struct MergedCharRanges :
     /// Begin and end of the range to be inserted
     const auto& [b,e]=
       head;
-    // if(not std::is_constant_evaluated())
-    //   printf("Considering [%d,%d)\n",b,e);
+    // diagnostic("Considering [",b,";",e,")\n";
     
     /// Current range, at the beginning set at the first range delimiter
     auto cur=
@@ -898,36 +895,28 @@ struct MergedCharRanges :
     // Insert the beginning of the range if not present
     if(cur==ranges.end() or cur->second<b)
       {
-	// if(not std::is_constant_evaluated())
-	//   printf("Inserting [%d,%d) at %zu\n",b,e,i);
+	// diagnostic("Inserting [",b,";",e,") at ",i,"\n");
 	ranges.insert(cur,{b,e});
       }
     else
       {
 	if(cur->first>b)
 	  // {
-	    // if(not std::is_constant_evaluated())
-	    //   printf("range %zu [%d,%d) extended left to ",i,cur->first,cur->second);
+	    // diagnostic("range ",i," [",cur->first,",",cur->second,"%d) extended left to ");
 	    cur->first=std::min(cur->first,b);
-	    // if(not std::is_constant_evaluated())
-	    //   printf("[%d,%d)\n",cur->first,cur->second);
+	    // diagnostic("[",cur->first,","cur->second,")\n");
 	  // }
 	
 	if(cur->second<e)
 	  {
-	    // if(not std::is_constant_evaluated())
-	    //   printf("range %zu [%d,%d) extended right to ",i,cur->first,cur->second);
+	    // diagnostic("range ",i,"[",cur->first,",",cur->second,") extended right to ");
 	    cur->second=e;
-	    // if(not std::is_constant_evaluated())
-	    //   printf("[%d,%d)\n",cur->first,cur->second);
+	    // diagnostic("[",cur->first,",",cur->second,")\n");
 	    while(cur+1!=ranges.end() and cur->second>=(cur+1)->first)
 	      {
 		cur->second=std::max(cur->second,(cur+1)->second);
-		// if(not std::is_constant_evaluated())
-		//   {
-		//     printf("extended right to [%d,%d)\n",cur->first,cur->second);
-		//     printf("erasing [%d,%d)\n",(cur+1)->first,(cur+1)->second);
-		//   }
+		// diagnostic("extended right to [",cur->first,",",cur->second,")\n");
+		// diagnostic("erasing [",(cur+1)->first,",",(cur+1)->second,")\n");
 		cur=ranges.erase(cur+1)-1;
 	      }
 	  }
@@ -956,9 +945,8 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
       const bool negated=
 	matchIn.matchChar('^');
 	
-      // if(not std::is_constant_evaluated())
-      // 	printf("matched [\n");
-	
+      // diagnostic("matched [\n");
+      
       /// List of matchable chars
       MergedCharRanges matchableChars;
       
@@ -973,8 +961,7 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
 	{
 	  if(matchIn.matchStr(range.first))
 	    {
-	      // if(not std::is_constant_evaluated())
-	      // 	printf("matched class %s\n",name.begin());
+	      // diagnostic("matched class ",name.begin(),"\n");
 	      
 	      matchableChars.set(range.second);
 	      
@@ -996,13 +983,11 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
 	    return matchClass(matchClass,classes...);
 	  },CharClasses::classes))
 	    {
-	      // if(not std::is_constant_evaluated())
-	      // 	printf("matched no char class\n");
+	      // diagnostic("matched no char class\n");
 	      
 	      if(const char b=matchIn.matchPossiblyEscapedCharNotIn("^]-"))
 		{
-		  // if(not std::is_constant_evaluated())
-		  //   printf("matched char %c\n",b);
+		  // diagnostic("matched char ",b,"\n");
 		  
 		  /// Rewinds if not matched
 		  auto undoer=
@@ -1014,13 +999,11 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
 		  
 		  if(matchIn.matchChar('-'))
 		    {
-		      // if(not std::is_constant_evaluated())
-		      // 	printf(" matched - to get char range\n");
+		      // diagnostic(" matched - to get char range\n");
 		      
 		      if(const char e=matchIn.matchPossiblyEscapedCharNotIn("^]-"))
 			{
-			  // if(not std::is_constant_evaluated())
-			  //   printf("  matched char range end %c\n",e);
+			  // diagnostic("  matched char range end ",e,"\n");
 			  matchableChars.set(std::make_pair(b,e));
 			  accepting=true;
 			}
@@ -1030,8 +1013,7 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
 		    undoer.defuse();
 		  else
 		    {
-		      // if(not std::is_constant_evaluated())
-		      // 	printf("no char range end, single char\n");
+		      // diagnostic("no char range end, single char\n");
 		      matchableChars.set(b);
 		    }
 		}
@@ -1048,8 +1030,7 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
 	  if(negated)
 	    matchableChars.negate();
 	  
-	  // if(not std::is_constant_evaluated())
-	  //   printf("matched ]\n");
+	  // diagnostic("matched ]\n");
 	  
 	  /// Result to be returned, containing a nested list of OR nodes
 	  std::optional<RegexParserNode> res;
@@ -1262,29 +1243,24 @@ struct BaseRegexParser :
     
     while(dState<self().dStates.size())
       {
-	if(not std::is_constant_evaluated())
-	  printf("\nEntering dState %zu\n",dState);
+	diagnostic("\nEntering dState ",dState,"\n");
 	const char& c=
 	  v.empty()?'\0':v.front();
 	
-	if(not std::is_constant_evaluated())
-	  printf("trying to match %c\n",c);
+	diagnostic("trying to match ",c,"\n");
 	
 	auto trans=self().transitions.begin()+self().dStates[dState].transitionsBegin;
-	if(not std::is_constant_evaluated())
-	  printf("First transition: %zu\n",self().dStates[dState].transitionsBegin);
+	diagnostic("First transition: ",self().dStates[dState].transitionsBegin,"\n");
 	while(trans!=self().transitions.end() and trans->iDStateFrom==dState and not((trans->beg<=c and trans->end>c)))
 	  {
-	    if(not std::is_constant_evaluated())
-	      printf("Ignored transition [%c,%c)\n",trans->beg,trans->end);
+	    diagnostic("Ignored transition [",trans->beg,",",trans->end,")\n");
 	    trans++;
 	  }
 	
 	if(trans!=self().transitions.end() and trans->iDStateFrom==dState)
 	  {
 	    dState=trans->nextDState;
-	    if(not std::is_constant_evaluated())
-	      printf("matched %c with trans %zu [%c,%c), going to dState %zu\n",c,trans->iDStateFrom,trans->beg,trans->end,dState);
+	    diagnostic("matched ",c," with trans ",trans->iDStateFrom," [",trans->beg,",",trans->end,"), going to dState ",dState,"\n");
 	    v.remove_prefix(1);
 	  }
 	else
@@ -1342,13 +1318,10 @@ struct DynamicRegexParser :
 	for(const auto& f : dStateLabels[iDState])
 	  ranges.set(std::make_pair(f->begChar,f->endChar));
 	
-	if(not std::is_constant_evaluated())
-	  {
-	    printf("dState: {");
-	    for(size_t i=0;const auto& n : dStateLabels[iDState])
-	      printf("%s%zu",(i++==0)?"":",",n->id);
-	    printf("}\n");
-	  }
+	diagnostic("dState: {");
+	for(size_t i=0;const auto& n : dStateLabels[iDState])
+	  diagnostic((i++==0)?"":",",n->id);
+	diagnostic("}\n");
 	
 	// Loop on all ranges to determine to which dState it points,
 	// inserting a new dState if not present
@@ -1389,13 +1362,10 @@ struct DynamicRegexParser :
 	  while(iNextDState<dStateLabels.size() and dStateDiffers(dStateLabels[iNextDState],nextDState))
 	    iNextDState++;
 	  
-	  if(not std::is_constant_evaluated())
-	    {
-	      printf(" range [%c - %c) goes to state {",b,e);
-	      for(size_t i=0;const auto& n : nextDState)
-		printf("%s%zu",(i++==0)?"":",",n->id);
-	      printf("}, %zu\n",iNextDState);
-	    }
+	  diagnostic(" range [",b,",",e,") goes to state {");
+	  for(size_t i=0;const auto& n : nextDState)
+	    diagnostic((i++==0)?"":",",n->id);
+	  diagnostic("}, ",iNextDState,"\n");
 	  
 	  // Creates the next dState label if not existing
 	  if(iNextDState==dStateLabels.size() and nextDState.size())
@@ -1620,6 +1590,8 @@ struct Grammar
     
     if(iAss!=possibleAssociativities.size())
       {
+	diagnostic("Matched ",possibleAssociativities[iAss].first.begin()," associativity\n");
+	
 	currentAssociativity=possibleAssociativities[iAss].second;
 	
 #warning	while(auto m=matchAndParseSymbol())
@@ -1656,9 +1628,13 @@ struct Grammar
 
     if(not id.empty())
       {
-	printf("Matched grammar: \"%.*s\"\n",(int)id.size(),id.begin());
+	diagnostic("Matched grammar: ",std::quoted(id),", skipped to ",match.ref.begin(),"\n");
+	
+	match.matchWhiteSpaceOrComments();
+	
 	if(match.matchChar('{'))
 	  {
+	    diagnostic("Matched {");
 #warning ddd
 	    // do match.matchWhiteSpaceOrComments();
 	    // while(matchAndParseAssociativityStatement(match) or
