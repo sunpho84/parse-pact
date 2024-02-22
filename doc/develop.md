@@ -74,7 +74,7 @@ Nodes in the AST are of the following types:
   * are executed when matched
   * to be understood better.
 
-AST represent the matching in a clar but verbose way, and are
+AST represent the matching in a clear but verbose way, and are
 difficult to use in practice, as matching a regexp needes to try all
 paths in turn, discarding all the case in which the path is
 invalid. This implies rolling back the input stream.
