@@ -412,7 +412,7 @@ struct Matching
   }
   
   /// Matches a literal or regex, introduced and finished by delim, with no line break
-  constexpr std::string_view matchLiteralOrRegex(const char& delim)
+  constexpr std::optional<std::string_view> matchLiteralOrRegex(const char& delim)
   {
     auto undoer=
       this->temptativeMatch();
@@ -438,14 +438,26 @@ struct Matching
 	
 	undoer.defuse();
 	
-	return {beg.begin()+1,ref.begin()-1};
+	return std::string_view{beg.begin()+1,ref.begin()-1};
       }
     
     return {};
   }
   
+  /// Matches a literal, introduced and finished by ', with no line break
+  constexpr std::optional<std::string_view> matchLiteral()
+  {
+    return matchLiteralOrRegex('\'');
+  }
+  
+  /// Matches a regex, introduced and finished by ", with no line break
+  constexpr std::optional<std::string_view> matchRegex()
+  {
+    return matchLiteralOrRegex('"');
+  }
+  
   /// Matches an identifier
-  constexpr std::string_view matchId()
+  constexpr std::optional<std::string_view> matchId()
   {
     auto undoer=
       this->temptativeMatch();
@@ -462,7 +474,7 @@ struct Matching
 	
 	undoer.defuse();
 	
-	return {beg.begin(),ref.begin()};
+	return std::string_view{beg.begin(),ref.begin()};
       }
     
     return {};
@@ -1503,7 +1515,7 @@ struct GrammarProduction
 
 struct GrammarSymbol
 {
-  std::string_view matchingString;
+  std::string_view name;
   
   enum class Type{NULL_SYMBOL,TERMINAL_SYMBOL,NON_TERMINAL_SYMBOL,END_SYMBOL};
   
@@ -1513,16 +1525,21 @@ struct GrammarSymbol
   
   Associativity associativity;
   
-  bool isRegex;
-  
   size_t precedence;
   
   std::vector<GrammarProduction*> productions;
 };
 
+struct RegexToken
+{
+  std::string_view str;
+  
+  size_t iSymbol;
+};
+
 struct Grammar
 {
-  std::string_view id;
+  std::string_view name;
   
   std::vector<GrammarSymbol> symbols;
   
@@ -1538,32 +1555,20 @@ struct Grammar
   
   std::vector<GrammarProduction> productions;
   
-  std::vector<std::string_view> whiteSpaceTokens;
-  
-  GrammarSymbol::Associativity currentAssociativity;
+  std::vector<RegexToken> whitespaceTokens;
   
   constexpr GrammarSymbol& insertOrFindSymbol(const std::string_view& name,
-					      const GrammarSymbol::Type& type,
-					      const GrammarSymbol::Associativity& associativity,
-					      const bool& isRegex,
-					      const size_t& precedence)
+					      const GrammarSymbol::Type& type)
   {
     if(auto ref=
        std::ranges::find_if(symbols,
 			    [&name](const GrammarSymbol& s)
 			    {
-			      return s.matchingString==name;
+			      return s.name==name;
 			    });ref!=symbols.end())
-      {
-	if(ref->isRegex!=isRegex or
-	   ref->associativity!=associativity or
-	   ref->precedence!=precedence)
-	  errorEmitter("symbol is already present with different pars");
-	
-	return *ref;
-      }
+      return *ref;
     else
-      return symbols.emplace_back(name,type,associativity,isRegex,precedence);
+      return symbols.emplace_back(name,type);
   }
   
   constexpr std::optional<GrammarSymbol> matchAndParseSymbol(Matching& m)
@@ -1571,13 +1576,13 @@ struct Grammar
     m.matchWhiteSpaceOrComments();
     
     if(m.matchStr("error"))
-         return symbols[iErrorSymbol];
-    else if(auto l=m.matchLiteralOrRegex('\'');not l.empty())
-      return insertOrFindSymbol(l,GrammarSymbol::Type::TERMINAL_SYMBOL,currentAssociativity,false,currentPrecedence);
-    else if(auto r=m.matchLiteralOrRegex('"');not r.empty())
-      return insertOrFindSymbol(r,GrammarSymbol::Type::TERMINAL_SYMBOL,currentAssociativity,true,currentPrecedence);
-    else if(auto i=m.matchId();not i.empty())
-      return insertOrFindSymbol(i,GrammarSymbol::Type::NON_TERMINAL_SYMBOL,currentAssociativity,false,currentPrecedence);
+      return symbols[iErrorSymbol];
+    else if(auto l=m.matchLiteral())
+      return insertOrFindSymbol(*l,GrammarSymbol::Type::TERMINAL_SYMBOL);
+    else if(auto r=m.matchRegex())
+      return insertOrFindSymbol(*r,GrammarSymbol::Type::TERMINAL_SYMBOL);
+    else if(auto i=m.matchId())
+      return insertOrFindSymbol(*i,GrammarSymbol::Type::NON_TERMINAL_SYMBOL);
 				
     return {};
   }
@@ -1596,20 +1601,23 @@ struct Grammar
 					std::make_pair("%right",RIGHT)};
     
     size_t iAss=0;
-    while(iAss<possibleAssociativities.size() and not matchin.matchStr(possibleAssociativities[iAss].first))
+    while(iAss<possibleAssociativities.size() and
+	  not matchin.matchStr(possibleAssociativities[iAss].first))
       iAss++;
     
     if(iAss!=possibleAssociativities.size())
       {
 	diagnostic("Matched ",possibleAssociativities[iAss].first.begin()," associativity\n");
 	
-	currentAssociativity=possibleAssociativities[iAss].second;
+	GrammarSymbol::Associativity currentAssociativity=possibleAssociativities[iAss].second;
 	currentPrecedence++;
 	
 	while(auto m=matchAndParseSymbol(matchin))
 	  {
-	    diagnostic("Matched symbol: ",std::quoted(m->matchingString),"\n");
-	    symbols.push_back(*m);
+	    diagnostic("Matched symbol: ",std::quoted(m->name),"\n");
+	    
+	    m->associativity=currentAssociativity;
+	    m->precedence=currentPrecedence;
 	  }
 	
 	if(not matchin.matchChar(';'))
@@ -1617,15 +1625,80 @@ struct Grammar
 	else
 	  diagnostic("Matched associativity statement end\n");
 	
+	undoer.defuse();
+	
 	return true;
       }
     
     return false;
   }
   
+  constexpr bool matchProductionExpression(Matching& matchin)
+  {
+    if(auto matchAndParseSymbol(matchin)
+  }
+  
+  constexpr bool matchProductionStatement(Matching& matchin)
+  {
+    auto undoer=
+      matchin.temptativeMatch();
+    
+    bool res=false;
+    
+    if(auto i=matchin.matchId())
+      {
+	auto& lhs=
+	  insertOrFindSymbol(*i,GrammarSymbol::Type::NON_TERMINAL_SYMBOL);
+	
+	matchin.matchWhiteSpaceOrComments();
+	if(matchin.matchChar(':'))
+	  {
+	    bool m;
+	    
+	    do
+	      {
+		matchin.matchWhiteSpaceOrComments();
+		estendi matchProductionExpression(matchin);
+		matchin.matchWhiteSpaceOrComments();
+	      }
+	    while(m and matchin.matchChar('|'));
+	    
+	    if(matchin.matchChar(';'))
+	      {
+		undoer.defuse();
+		
+		res=true;
+	      }
+	  }
+      }
+    
+    return res;
+  }
+  
+  constexpr bool matchAndParseWhitespaceStatement(Matching& matchin)
+  {
+    bool res{false};
+    
+    /// Undo if not matching
+    auto undoer=
+      matchin.temptativeMatch();
+    
+    if(matchin.matchStr("%whitespace"))
+      {
+	while(auto l=matchin.matchRegex())
+	  whitespaceTokens.emplace_back(*l,iWhitespaceSymbol);
+	
+	const bool res=
+	  matchin.matchChar(';');
+	
+	if(res) undoer.defuse();
+      }
+    
+    return res;
+  }
+  
   constexpr Grammar(const std::string_view& str) :
-    currentPrecedence(0),
-    currentAssociativity(GrammarSymbol::Associativity::NONE)
+    currentPrecedence(0)
   {
     using enum GrammarSymbol::Type;
     
@@ -1637,26 +1710,28 @@ struct Grammar
 	   {".whitespace",NULL_SYMBOL,&iWhitespaceSymbol}})
       {
 	*i=symbols.size();
-	symbols.emplace_back(name,type,GrammarSymbol::Associativity::NONE,false,0);
+	symbols.emplace_back(name,type,GrammarSymbol::Associativity::NONE,0);
       }
     
     Matching match(str);
     
     match.matchWhiteSpaceOrComments();
-    id=match.matchId();
     
-    if(not id.empty())
+    if(auto id=match.matchId())
       {
-	diagnostic("Matched grammar: ",std::quoted(id),", skipped to ",match.ref.begin(),"\n");
+	name=*id;
+	
+	diagnostic("Matched grammar: ",std::quoted(*id),", skipped to ",match.ref.begin(),"\n");
 	
 	match.matchWhiteSpaceOrComments();
 	
 	if(match.matchChar('{'))
 	  {
-	    diagnostic("Matched {");
+	    diagnostic("Matched {\n");
 	    
-	    match.matchWhiteSpaceOrComments();
-	    matchAndParseAssociativityStatement(match);
+	    do match.matchWhiteSpaceOrComments();
+	    while(matchAndParseAssociativityStatement(match) or
+		  matchAndParseWhitespaceStatement(match));
 #warning working here
 	    // do match.matchWhiteSpaceOrComments();
 	    // while(matchAndParseAssociativityStatement(match) or
