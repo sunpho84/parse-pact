@@ -1557,7 +1557,7 @@ struct Grammar
   
   std::vector<RegexToken> whitespaceTokens;
   
-  constexpr GrammarSymbol& insertOrFindSymbol(const std::string_view& name,
+  constexpr GrammarSymbol* insertOrFindSymbol(const std::string_view& name,
 					      const GrammarSymbol::Type& type)
   {
     if(auto ref=
@@ -1566,17 +1566,17 @@ struct Grammar
 			    {
 			      return s.name==name;
 			    });ref!=symbols.end())
-      return *ref;
+      return &(*ref);
     else
-      return symbols.emplace_back(name,type);
+      return &symbols.emplace_back(name,type);
   }
   
-  constexpr std::optional<GrammarSymbol> matchAndParseSymbol(Matching& m)
+  constexpr GrammarSymbol* matchAndParseSymbol(Matching& m)
   {
     m.matchWhiteSpaceOrComments();
     
     if(m.matchStr("error"))
-      return symbols[iErrorSymbol];
+      return &symbols[iErrorSymbol];
     else if(auto l=m.matchLiteral())
       return insertOrFindSymbol(*l,GrammarSymbol::Type::TERMINAL_SYMBOL);
     else if(auto r=m.matchRegex())
@@ -1584,7 +1584,7 @@ struct Grammar
     else if(auto i=m.matchId())
       return insertOrFindSymbol(*i,GrammarSymbol::Type::NON_TERMINAL_SYMBOL);
 				
-    return {};
+    return nullptr;
   }
   
   constexpr bool matchAndParseAssociativityStatement(Matching& matchin)
@@ -1633,11 +1633,6 @@ struct Grammar
     return false;
   }
   
-  constexpr bool matchProductionExpression(Matching& matchin)
-  {
-    if(auto matchAndParseSymbol(matchin)
-  }
-  
   constexpr bool matchProductionStatement(Matching& matchin)
   {
     auto undoer=
@@ -1647,19 +1642,23 @@ struct Grammar
     
     if(auto i=matchin.matchId())
       {
-	auto& lhs=
+	auto lhs=
 	  insertOrFindSymbol(*i,GrammarSymbol::Type::NON_TERMINAL_SYMBOL);
 	
 	matchin.matchWhiteSpaceOrComments();
 	if(matchin.matchChar(':'))
 	  {
 	    bool m;
-	    
+
+	    std::vector<GrammarSymbol*> rhs;
 	    do
-	      {
 		matchin.matchWhiteSpaceOrComments();
-		estendi matchProductionExpression(matchin);
-		matchin.matchWhiteSpaceOrComments();
+		auto s=matchAndParseSymbol(matchin);
+		
+		if((m=s!=nullptr))
+		  rhs.push_back(s);
+#warning working here here
+			
 	      }
 	    while(m and matchin.matchChar('|'));
 	    
