@@ -40,7 +40,8 @@ namespace Temptative
       state(constructionState)
     {
       diagnostic("Starting ",descr,"\n");
-      nNestedActions++;
+      if(not std::is_constant_evaluated())
+	nNestedActions++;
     }
     
     /// Unaccept the action
@@ -60,7 +61,8 @@ namespace Temptative
     {
       if(state==UNACCEPTED)
 	undoer();
-      nNestedActions--;
+      if(not std::is_constant_evaluated())
+	nNestedActions--;
     }
     
     constexpr operator bool() const
@@ -75,8 +77,7 @@ namespace Temptative
 inline void errorEmitter(const char* str)
 {
   fprintf(stderr,"Error: %s\n",str);
-  if(not std::is_constant_evaluated())
-    exit(1);
+  exit(1);
   
 }
 
