@@ -220,11 +220,11 @@ struct Matching
   /// Returns a bomb, which rewinds the matcher if not defused
   constexpr auto temptativeMatch(const bool ignited=true)
   {
-    return Bomb([this,
-		 oldRef=this->ref]()
+    return Bomb([back=*this,
+		 this]()
     {
       // diagnostic("putting back ref ",this->ref.begin(),"->",oldRef.begin(),"\n");
-      this->ref=oldRef;
+      *this=back;
     },ignited);
   }
   
@@ -232,6 +232,12 @@ struct Matching
   constexpr Matching(const std::string_view& in) :
     ref(in)
   {
+  }
+  
+  /// Advance the reference
+  constexpr void advance(const size_t& n=1)
+  {
+    ref.remove_prefix(n);
   }
   
   /// Match any char
@@ -242,7 +248,7 @@ struct Matching
 	const char c=
 	  ref.front();
 	
-	ref.remove_prefix(1);
+	advance();
 	
 	return c;
       }
@@ -257,7 +263,7 @@ struct Matching
       (not ref.empty()) and ref.starts_with(c);
     
     if(accepting)
-      ref.remove_prefix(1);
+      advance();
     
     return accepting;
   }
@@ -288,7 +294,7 @@ struct Matching
 	{
 	  // diagnostic("matched ",str.front(),"\n");
 	  
-	  ref.remove_prefix(1);
+	  advance();
 	  str.remove_prefix(1);
 	}
     
@@ -304,7 +310,7 @@ struct Matching
     if(not ref.empty())
       if(const char c=ref.front();filt.find_first_of(c)==filt.npos)
 	{
-	  ref.remove_prefix(1);
+	  advance();
 	  
 	  return c;
 	}
@@ -327,12 +333,12 @@ struct Matching
 	      filt[pos];
 	    
 	    // diagnostic("matched char '",c,"'\n");
-	    ref.remove_prefix(1);
+	    advance();
 	    
 	    return c;
 	  }
 	
-	// diagnostic("not matched anything with ",ref.front()," in the filtering list ",filt.begin(),"\n");
+	// diagnostic("not matched anything with \'",ref.front(),"\' in the filtering list \"",filt,"\"\n");
       }
     
     return '\0';
@@ -355,7 +361,7 @@ struct Matching
 	while(not ref.empty() and lineEndIds.find_first_of(ref.front())==lineEndIds.npos)
 	  {
 	    // diagnostic("matched ",ref.front()," in line comment\n");
-	    ref.remove_prefix(1);
+	    advance();
 	  }
 	
 	// diagnostic("matched line comment end\n");
@@ -381,7 +387,7 @@ struct Matching
 	while(not ref.empty() and not (res=(matchChar('*') and matchChar('/'))))
 	  {
 	    // diagnostic("discarding '",ref.front(),"'\n");
-	    ref.remove_prefix(1);
+	    advance();
 	  }
 	
 	// if(not std::is_constant_evaluated())
@@ -418,10 +424,12 @@ struct Matching
       this->temptativeMatch();
     
     if(std::string_view beg=ref;
-       (not ref.empty()) and matchChar(delim))
+       ((not ref.empty())) and matchChar(delim))
       {
 	bool escaped{};
 	char c{};
+	
+	// diagnostic("Beginning of literal or regex, delimiter: ",delim,"\n");
 	
 	do
 	  {
@@ -430,6 +438,7 @@ struct Matching
 	    
 	    escaped=(c=='\\');
 	    c=matchAnyChar();
+	    diagnostic(" matched \'",c,"\'\n");
 	  }
 	while(escaped or c!=delim);
 	
@@ -465,11 +474,11 @@ struct Matching
     if(std::string_view beg=ref;
        (not ref.empty()) and charMultiMatches(ref.front(),std::make_tuple(CharClasses::alpha,'_')))
       {
-	ref.remove_prefix(1);
-	while((not ref.empty()) and CharClasses::charIsInClass<CharClasses::ALNUM>(ref.front()))
+	advance();
+	while((not ref.empty()) and CharClasses::charIsInClass<CharClasses::WORD>(ref.front()))
 	  {
 	    // printf("Matched %c\n",ref.front());
-	    ref.remove_prefix(1);
+	    advance();
 	  }
 	
 	undoer.defuse();
@@ -479,9 +488,6 @@ struct Matching
     
     return {};
   }
-  
-  /// Forbids taking a copy
-  Matching(const Matching&)=delete;
   
   /// Forbids default construct
   Matching()=delete;
@@ -1527,6 +1533,10 @@ struct GrammarSymbol
   
   size_t precedence;
   
+  GrammarSymbol* precedenceSymbol;
+  
+  bool referredAsPrecedenceSymbol;
+  
   std::vector<GrammarProduction*> productions;
 };
 
@@ -1600,6 +1610,8 @@ struct Grammar
 					std::make_pair("%left",LEFT),
 					std::make_pair("%right",RIGHT)};
     
+    matchin.matchWhiteSpaceOrComments();
+    
     size_t iAss=0;
     while(iAss<possibleAssociativities.size() and
 	  not matchin.matchStr(possibleAssociativities[iAss].first))
@@ -1620,6 +1632,8 @@ struct Grammar
 	    m->precedence=currentPrecedence;
 	  }
 	
+	matchin.matchWhiteSpaceOrComments();
+	
 	if(not matchin.matchChar(';'))
 	  errorEmitter("Unterminated associativity statement");
 	else
@@ -1633,37 +1647,73 @@ struct Grammar
     return false;
   }
   
-  constexpr bool matchProductionStatement(Matching& matchin)
+  constexpr bool matchAndParseProductionStatement(Matching& matchin)
   {
     auto undoer=
       matchin.temptativeMatch();
     
     bool res=false;
     
+    matchin.matchWhiteSpaceOrComments();
+    
     if(auto i=matchin.matchId())
       {
 	auto lhs=
 	  insertOrFindSymbol(*i,GrammarSymbol::Type::NON_TERMINAL_SYMBOL);
+	diagnostic("Found lhs: ",lhs->name,"\n");
 	
 	matchin.matchWhiteSpaceOrComments();
 	if(matchin.matchChar(':'))
 	  {
-	    bool m;
-
-	    std::vector<GrammarSymbol*> rhs;
 	    do
+	      {
+		/// Right hand side of the production
+		std::vector<GrammarSymbol*> rhs;
 		matchin.matchWhiteSpaceOrComments();
-		auto s=matchAndParseSymbol(matchin);
+		while(GrammarSymbol* matchedSymbol=matchAndParseSymbol(matchin))
+		  {
+		    rhs.push_back(matchedSymbol);
+		    matchin.matchWhiteSpaceOrComments();
+		    diagnostic("Found rhs: ",matchedSymbol->name,"\n");
+		  }
 		
-		if((m=s!=nullptr))
-		  rhs.push_back(s);
+		GrammarSymbol* precedenceSymbol;
+		if(matchin.matchStr("%precedence"))
+		  {
+		    if((precedenceSymbol=matchAndParseSymbol(matchin)))
+		      precedenceSymbol->referredAsPrecedenceSymbol=true;
+		    else
+		      errorEmitter("Expected symbol from which to infer the precedence");
+		    
+		    matchin.matchWhiteSpaceOrComments();
+		  }
+		
+		GrammarSymbol* action{};
+		if(matchin.matchChar('['))
+		  {
+		    matchin.matchWhiteSpaceOrComments();
+		    
+		    if(auto i=matchin.matchId())
+		      action=insertOrFindSymbol(*i,GrammarSymbol::Type::NON_TERMINAL_SYMBOL);
+		    else
+		      errorEmitter("Expected identifier to be used as action");
+
+		    diagnostic("matched action: ",std::quoted(action->name),"\n");
+		    
+		    matchin.matchWhiteSpaceOrComments();
+		    if(not matchin.matchChar(']'))
+		      errorEmitter("Expected end of action ']'");
+		    
+		    matchin.matchWhiteSpaceOrComments();
+		  }
+		
 #warning working here here
-			
 	      }
-	    while(m and matchin.matchChar('|'));
+	    while(matchin.matchChar('|'));
 	    
 	    if(matchin.matchChar(';'))
 	      {
+		diagnostic("Found production statement end\n");
 		undoer.defuse();
 		
 		res=true;
@@ -1682,15 +1732,26 @@ struct Grammar
     auto undoer=
       matchin.temptativeMatch();
     
+    matchin.matchWhiteSpaceOrComments();
+    
     if(matchin.matchStr("%whitespace"))
       {
+	diagnostic("Matched whitespace statement\n");
+	
+	matchin.matchWhiteSpaceOrComments();
+	
 	while(auto l=matchin.matchRegex())
-	  whitespaceTokens.emplace_back(*l,iWhitespaceSymbol);
+	  {
+	    whitespaceTokens.emplace_back(*l,iWhitespaceSymbol);
+	    diagnostic("Matched regex ",*l,"\n");
+	    matchin.matchWhiteSpaceOrComments();
+	  }
 	
-	const bool res=
-	  matchin.matchChar(';');
+	res=matchin.matchChar(';');
 	
-	if(res) undoer.defuse();
+	diagnostic("In function ",__PRETTY_FUNCTION__," line ",__LINE__," matcher at ",std::quoted(matchin.ref),"\n");
+	if(res)
+	  undoer.defuse();
       }
     
     return res;
@@ -1728,9 +1789,11 @@ struct Grammar
 	  {
 	    diagnostic("Matched {\n");
 	    
-	    do match.matchWhiteSpaceOrComments();
 	    while(matchAndParseAssociativityStatement(match) or
-		  matchAndParseWhitespaceStatement(match));
+		  matchAndParseWhitespaceStatement(match) or
+		  matchAndParseProductionStatement(match))
+	      diagnostic("parsed\n");
+	    
 #warning working here
 	    // do match.matchWhiteSpaceOrComments();
 	    // while(matchAndParseAssociativityStatement(match) or
@@ -1738,7 +1801,7 @@ struct Grammar
 	    // 	  matchAndParseProduction());
 	    
 	    if(match.matchChar('}'))
-	      return ;
+	      diagnostic("Parsing finished\n");
 	  }
       }
   }

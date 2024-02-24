@@ -18,14 +18,39 @@ int main(int narg,char** arg)
 {
   // Matching m("/* *ciao  d* \n mondo */    // come va \n qui { %left bene");
   
-  Grammar gr("ciao { %left r s t; %right y e \"f+t?\"; %whitespace " ";}");
+  constexpr char rrr[]="error_handling_calculator {\
+    %whitespace \"[ \\t\\r\\n]*\";\
+    %none error;\
+    %left '(' ')';\
+    %left '+' '-';\
+    %left '*' '/';\
+    %none integer;\
+    stmts: stmts stmt | stmt | %precedence '(';\
+    stmt: \
+        expr ';' [result] | \
+        error ';' [unexpected_error]\
+    ;\
+    expr:\
+        expr '+' expr [add] |\
+        expr '-' expr [subtract] |\
+        expr '*' expr [multiply] |\
+        expr '/' expr [divide] |\
+        expr error expr [unknown_operator_error] |\
+        '(' expr ')' [compound] |\
+        integer [integer]\
+    ;\
+    integer: \"[0-9]+\";\
+}";
+    
+  Grammar rrrr(rrr);  
+   
+  //Grammar gr("ciao { %left r s t; %right y e \"f+t?\"; %whitespace " "; gino : ballerino |danzatrice| odalisca %precedence spon [act];}");
   
-  Matching m("'ciao \\' bellissimo'");
+  // Matching m("'ciao \\' bellissimo'");
 
   
-
-  if(const auto s=m.matchLiteralOrRegex('\''))
-    diagnostic(*s,"\n");
+  // if(const auto s=m.matchLiteralOrRegex('\''))
+  //   diagnostic(*s,"\n");
   
   // test();
   
