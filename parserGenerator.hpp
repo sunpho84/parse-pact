@@ -9,42 +9,66 @@
 #include <string_view>
 #include <vector>
 
-/// When destroyed, performs the action unless defused
-template <typename F>
-struct Bomb
+/// Print to terminal if not evaluated at compile time
+template <typename...Args>
+constexpr void diagnostic(Args&&...args);
+
+namespace Temptative
 {
-  /// Action performed at destruction
-  F explodeAction;
+  /// State of an action
+  enum State : bool {UNACCEPTED,ACCEPTED};
   
-  /// State whether the bomb is ignited
-  bool ignited;
+  size_t nNestedActions=0;
   
-  /// Construct taking a funtion
-  constexpr Bomb(F&& explodeAction,
-		 const bool& ignited=true) :
-    explodeAction(explodeAction),ignited(ignited)
+  /// When destroyed, performs the action unless the action is accepted
+  template <typename F>
+  struct Action
   {
-  }
-  
-  /// Light up the bomb
-  constexpr void ignite()
-  {
-    ignited=false;
-  }
-  
-  /// Turns the bomb down
-  constexpr void defuse()
-  {
-    ignited=false;
-  }
-  
-  /// Destructor, making the bomb explode if not defused
-  constexpr ~Bomb()
-  {
-    if(ignited)
-      explodeAction();
-  }
-};
+    using enum State;
+    
+    /// Action performed at destruction if not accepted
+    F undoer;
+    
+    /// State whether the action is accepted
+    bool state;
+    
+    /// Construct taking a funtion
+    constexpr Action(const char* descr,
+		     F&& undoer,
+		     const bool& constructionState=UNACCEPTED) :
+      undoer(undoer),
+      state(constructionState)
+    {
+      diagnostic("Starting ",descr,"\n");
+      nNestedActions++;
+    }
+    
+    /// Unaccept the action
+    constexpr void unaccept()
+    {
+      state=UNACCEPTED;
+    }
+    
+    /// Accept the action
+    constexpr void accept()
+    {
+      state=ACCEPTED;
+    }
+    
+    /// Destructor, undoing the action if not accepted
+    constexpr ~Action()
+    {
+      if(state==UNACCEPTED)
+	undoer();
+      nNestedActions--;
+    }
+    
+    constexpr operator bool() const
+    {
+      return (bool)state;
+    }
+  };
+}
 
 /// Emit the error. Can be run only at compile time, so the error will
 /// be prompted at compile time if invoked in a constexpr
@@ -61,7 +85,11 @@ template <typename...Args>
 constexpr void diagnostic(Args&&...args)
 {
   if(not std::is_constant_evaluated())
-    ((std::cout<<args),...);
+    {
+      for(size_t i=0;i<Temptative::nNestedActions;i++)
+	std::cout<<"\t";
+      ((std::cout<<args),...);
+    }
 }
 
 /// Implements static polymorphysm via CRTP, while we wait for C++-23
@@ -217,15 +245,17 @@ struct Matching
   /// Reference to the string view holding the data
   std::string_view ref;
   
-  /// Returns a bomb, which rewinds the matcher if not defused
-  constexpr auto temptativeMatch(const bool ignited=true)
+  /// Returns an undoer, which rewinds the matcher if not accepted
+  constexpr auto beginTemptativeMatch(const char* descr,
+				      const bool acceptedByDefault)
   {
-    return Bomb([back=*this,
-		 this]()
+    return Temptative::Action(descr,
+			      [back=*this,
+			       this]()
     {
-      // diagnostic("putting back ref ",this->ref.begin(),"->",oldRef.begin(),"\n");
+       diagnostic("not accepted, putting back ref ",this->ref.begin(),"->",back.ref.begin(),"\n");
       *this=back;
-    },ignited);
+    },acceptedByDefault);
   }
   
   /// Construct from a string view
@@ -248,6 +278,7 @@ struct Matching
 	const char c=
 	  ref.front();
 	
+	diagnostic("accepted char: ",c,"\n");
 	advance();
 	
 	return c;
@@ -261,6 +292,10 @@ struct Matching
   {
     const bool accepting=
       (not ref.empty()) and ref.starts_with(c);
+    
+    if(not ref.empty())
+      diagnostic("parsing char: ",ref.front(),", ");
+    diagnostic((accepting?"accepted":"not accepted"),", expected char: ",c,"\n");
     
     if(accepting)
       advance();
@@ -282,15 +317,11 @@ struct Matching
   constexpr bool matchStr(std::string_view str)
   {
     /// Rewinds if not matched
-    auto undoer=
-      temptativeMatch();
+    auto matchRes=
+      beginTemptativeMatch("matchStr",true);
     
-    /// Accept to begin with
-    bool accepting=
-      true;
-    
-    while(accepting and (not (str.empty() or ref.empty())))
-      if((accepting&=ref.starts_with(str.front())))
+    while(matchRes and (not (str.empty() or ref.empty())))
+      if((matchRes.state&=ref.starts_with(str.front())))
 	{
 	  // diagnostic("matched ",str.front(),"\n");
 	  
@@ -298,22 +329,29 @@ struct Matching
 	  str.remove_prefix(1);
 	}
     
-    if(accepting)
-      undoer.defuse();
-    
-    return accepting;
+    return matchRes;
   }
   
   /// Match a char if not in the filt list
   constexpr char matchCharNotIn(const std::string_view& filt)
   {
     if(not ref.empty())
-      if(const char c=ref.front();filt.find_first_of(c)==filt.npos)
-	{
-	  advance();
-	  
-	  return c;
-	}
+      {
+	diagnostic("parsing char ",ref.front(),"\n");
+	
+	if(const char c=ref.front();filt.find_first_of(c)==filt.npos)
+	  {
+	    advance();
+	    
+	    diagnostic("accepted as not in the filter ",filt,"\n");
+	    
+	    return c;
+	  }
+	else
+	  diagnostic("not accepted as in the filter ",filt,"\n");
+      }
+    else
+      diagnostic("not accepted as at the end\n");
     
     return '\0';
   }
@@ -420,8 +458,9 @@ struct Matching
   /// Matches a literal or regex, introduced and finished by delim, with no line break
   constexpr std::optional<std::string_view> matchLiteralOrRegex(const char& delim)
   {
-    auto undoer=
-      this->temptativeMatch();
+    /// Undo if not matched
+    auto res=
+      beginTemptativeMatch("matchLiteralOrRegex",false);
     
     if(std::string_view beg=ref;
        ((not ref.empty())) and matchChar(delim))
@@ -445,7 +484,7 @@ struct Matching
 	if(beg.begin()+1==ref.begin()-1)
 	  errorEmitter("Empty literal or regex");
 	
-	undoer.defuse();
+	res.accept();
 	
 	return std::string_view{beg.begin()+1,ref.begin()-1};
       }
@@ -468,8 +507,8 @@ struct Matching
   /// Matches an identifier
   constexpr std::optional<std::string_view> matchId()
   {
-    auto undoer=
-      this->temptativeMatch();
+    auto matchRes=
+      this->beginTemptativeMatch("matchId",false);
     
     if(std::string_view beg=ref;
        (not ref.empty()) and charMultiMatches(ref.front(),std::make_tuple(CharClasses::alpha,'_')))
@@ -481,7 +520,7 @@ struct Matching
 	    advance();
 	  }
 	
-	undoer.defuse();
+	matchRes.accept();
 	
 	return std::string_view{beg.begin(),ref.begin()};
       }
@@ -814,19 +853,18 @@ struct UnmergedCharRanges :
     if(cur==ranges.end() or cur->first!=e)
       ranges.insert(cur,{e,startNewRange});
     
-    // diagnostic("  new range after inserting [",b,";",e,"): \n");
-    // 	for(const auto& [b,e] : ranges)
-    // 	  diagnostic("    r: [",b,";",e,")\n");
-    // 	diagnostic("\n");
-    //   }
+    diagnostic("  new range after inserting [",b,";",e,"): \n");
+    for(const auto& [b,e] : ranges)
+      diagnostic("    r: [",b,";",e,")\n");
+    diagnostic("\n");
   }
   
   /// Loop on all ranges
   template <typename F>
   constexpr void onAllRanges(const F& f) const
   {
-    //   for(const auto& [b,e] : ranges)
-    // 	diagnostic("    r: [",b,";",e,")\n");
+    for(const auto& [b,e] : ranges)
+      diagnostic("    r: [",b,";",e,")\n");
     
     for(size_t iRangeBeg=0;iRangeBeg+1<ranges.size();iRangeBeg++)
       {
@@ -881,12 +919,12 @@ struct MergedCharRanges :
     if(const char m=std::numeric_limits<char>::max();prevEnd<m)
       negatedRanges.push_back({prevEnd,m});
     
-    // 	diagnostic("range:\n");
-    // 	for(const auto& [b,e] : ranges)
-    // 	  diagnostic(" [",b,";",e,")\n");
-    // 	diagnostic("negated range:\n");
-    // 	for(const auto& [b,e] : negatedRanges)
-    // 	  diagnostic(" [",b,";",e,")\n");
+    diagnostic("range:\n");
+    for(const auto& [b,e] : ranges)
+      diagnostic(" [",b,";",e,")\n");
+    diagnostic("negated range:\n");
+    for(const auto& [b,e] : negatedRanges)
+      diagnostic(" [",b,";",e,")\n");
     
     // Replaces the range with the negated one
     ranges=
@@ -899,7 +937,8 @@ struct MergedCharRanges :
     /// Begin and end of the range to be inserted
     const auto& [b,e]=
       head;
-    // diagnostic("Considering [",b,";",e,")\n";
+    
+    diagnostic("Considering [",b,";",e,")\n");
     
     /// Current range, at the beginning set at the first range delimiter
     auto cur=
@@ -910,34 +949,34 @@ struct MergedCharRanges :
       cur++;
     
     /// Index of the position where to insert, useful for debug
-    // const size_t i=
-    //   std::distance(ranges.begin(),cur);
+    const size_t i=
+      std::distance(ranges.begin(),cur);
     
     // Insert the beginning of the range if not present
     if(cur==ranges.end() or cur->second<b)
       {
-	// diagnostic("Inserting [",b,";",e,") at ",i,"\n");
+	diagnostic("Inserting [",b,";",e,") at ",i,"\n");
 	ranges.insert(cur,{b,e});
       }
     else
       {
 	if(cur->first>b)
-	  // {
-	    // diagnostic("range ",i," [",cur->first,",",cur->second,"%d) extended left to ");
+	  {
+	    diagnostic("range ",i," [",cur->first,",",cur->second,"%d) extended left to ");
 	    cur->first=std::min(cur->first,b);
-	    // diagnostic("[",cur->first,","cur->second,")\n");
-	  // }
+	    diagnostic("[",cur->first,",",cur->second,")\n");
+	  }
 	
 	if(cur->second<e)
 	  {
-	    // diagnostic("range ",i,"[",cur->first,",",cur->second,") extended right to ");
+	    diagnostic("range ",i,"[",cur->first,",",cur->second,") extended right to ");
 	    cur->second=e;
-	    // diagnostic("[",cur->first,",",cur->second,")\n");
+	    diagnostic("[",cur->first,",",cur->second,")\n");
 	    while(cur+1!=ranges.end() and cur->second>=(cur+1)->first)
 	      {
 		cur->second=std::max(cur->second,(cur+1)->second);
-		// diagnostic("extended right to [",cur->first,",",cur->second,")\n");
-		// diagnostic("erasing [",(cur+1)->first,",",(cur+1)->second,")\n");
+		diagnostic("extended right to [",cur->first,",",cur->second,")\n");
+		diagnostic("erasing [",(cur+1)->first,",",(cur+1)->second,")\n");
 		cur=ranges.erase(cur+1)-1;
 	      }
 	  }
@@ -958,7 +997,7 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
 {
   /// Rewinds if not matched
   auto undoer=
-    matchIn.temptativeMatch();
+    matchIn.beginTemptativeMatch("matchBracketExpr",false);
     
   if(matchIn.matchChar('['))
     {
@@ -966,7 +1005,7 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
       const bool negated=
 	matchIn.matchChar('^');
 	
-      // diagnostic("matched [\n");
+      diagnostic("matched [\n");
       
       /// List of matchable chars
       MergedCharRanges matchableChars;
@@ -982,7 +1021,7 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
 	{
 	  if(matchIn.matchStr(range.first))
 	    {
-	      // diagnostic("matched class ",name.begin(),"\n");
+	      diagnostic("matched class ",range.first,"\n");
 	      
 	      matchableChars.set(range.second);
 	      
@@ -1004,37 +1043,31 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
 	    return matchClass(matchClass,classes...);
 	  },CharClasses::classes))
 	    {
-	      // diagnostic("matched no char class\n");
+	      diagnostic("matched no char class\n");
 	      
 	      if(const char b=matchIn.matchPossiblyEscapedCharNotIn("^]-"))
 		{
-		  // diagnostic("matched char ",b,"\n");
+		  diagnostic("matched char ",b,"\n");
 		  
 		  /// Rewinds if not matched
-		  auto undoer=
-		    matchIn.temptativeMatch();
-		  
-		  /// Keep trace of whether something has been matched
-		  bool accepting=
-		    false;
+		  auto rangeMatchState=
+		    matchIn.beginTemptativeMatch("matchBracketExprRange",false);
 		  
 		  if(matchIn.matchChar('-'))
 		    {
-		      // diagnostic(" matched - to get char range\n");
+		      diagnostic(" matched - to get char range\n");
 		      
 		      if(const char e=matchIn.matchPossiblyEscapedCharNotIn("^]-"))
 			{
-			  // diagnostic("  matched char range end ",e,"\n");
+			  diagnostic("  matched char range end ",e,"\n");
 			  matchableChars.set(std::make_pair(b,e));
-			  accepting=true;
+			  rangeMatchState.accept();
 			}
 		    }
 		  
-		  if(accepting)
-		    undoer.defuse();
-		  else
+		  if(not rangeMatchState)
 		    {
-		      // diagnostic("no char range end, single char\n");
+		      diagnostic("no char range end, single char\n");
 		      matchableChars.set(b);
 		    }
 		}
@@ -1046,12 +1079,12 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
       if(matchIn.matchChar('-'))
 	matchableChars.set('-');
       
-      if(matchIn.matchChar(']'))
+      if((undoer.state=matchIn.matchChar(']')))
 	{
 	  if(negated)
 	    matchableChars.negate();
 	  
-	  // diagnostic("matched ]\n");
+	  diagnostic("matched ]\n");
 	  
 	  /// Result to be returned, containing a nested list of OR nodes
 	  std::optional<RegexParserNode> res;
@@ -1069,8 +1102,6 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
 	      res=std::move(tmp);
 	  });
 	  
-	  undoer.defuse();
-	  
 	  return res;
 	}
     }
@@ -1083,15 +1114,16 @@ constexpr std::optional<RegexParserNode> matchSubExpr(Matching& matchIn)
 {
   /// Rewinds if not matched
   auto undoer=
-    matchIn.temptativeMatch();
+    matchIn.beginTemptativeMatch("matchSubExpr",false);
     
-  if(matchIn.matchChar('('))
-    if(std::optional<RegexParserNode> s=matchAndParsePossiblyOrredExpr(matchIn);s and matchIn.matchChar(')'))
+  if((undoer.state=matchIn.matchChar('(')))
+    if(std::optional<RegexParserNode> s=matchAndParsePossiblyOrredExpr(matchIn))
       {
-	undoer.defuse();
-	
-	return s;
+	diagnostic("Looking at ')' at string: ",matchIn.ref,"\n");
+	if((undoer.state=s and matchIn.matchChar(')')))
+	  return s;
       }
+  diagnostic("not accepted\n");
   
   return {};
 }
@@ -1156,17 +1188,9 @@ constexpr std::optional<RegexParserNode> matchAndParsePossiblyOrredExpr(Matching
   std::optional<RegexParserNode> lhs=
     matchAndParsePossiblyAndedExpr(matchIn);
   
-  /// Rewinds if not matched
-  auto undoer=
-    matchIn.temptativeMatch();
-    
-  if(matchIn.matchChar('|'))
-    if(std::optional<RegexParserNode> rhs=matchAndParsePossiblyAndedExpr(matchIn))
-      {
-	undoer.defuse();
-	
+  if(auto undoer=matchIn.beginTemptativeMatch("orExprSecondPart",false);matchIn.matchChar('|'))
+    if(std::optional<RegexParserNode> rhs=matchAndParsePossiblyAndedExpr(matchIn);(undoer.state=rhs.has_value()))
 	return RegexParserNode{RegexParserNode::Type::OR,{std::move(*lhs),std::move(*rhs)}};
-      }
   
   return lhs;
 }
@@ -1600,8 +1624,8 @@ struct Grammar
   constexpr bool matchAndParseAssociativityStatement(Matching& matchin)
   {
     /// Undo if not matching
-    auto undoer=
-      matchin.temptativeMatch();
+    auto matchRes=
+      matchin.beginTemptativeMatch("associativityStatement",false);
     
     using enum GrammarSymbol::Associativity;
     
@@ -1634,25 +1658,19 @@ struct Grammar
 	
 	matchin.matchWhiteSpaceOrComments();
 	
-	if(not matchin.matchChar(';'))
-	  errorEmitter("Unterminated associativity statement");
-	else
+	if((matchRes.state=matchin.matchChar(';')))
 	  diagnostic("Matched associativity statement end\n");
-	
-	undoer.defuse();
-	
-	return true;
+	else
+	  errorEmitter("Unterminated associativity statement");
       }
     
-    return false;
+    return matchRes;
   }
   
   constexpr bool matchAndParseProductionStatement(Matching& matchin)
   {
-    auto undoer=
-      matchin.temptativeMatch();
-    
-    bool res=false;
+    auto matchRes=
+      matchin.beginTemptativeMatch("productionStatement",false);
     
     matchin.matchWhiteSpaceOrComments();
     
@@ -1697,7 +1715,7 @@ struct Grammar
 		      action=insertOrFindSymbol(*i,GrammarSymbol::Type::NON_TERMINAL_SYMBOL);
 		    else
 		      errorEmitter("Expected identifier to be used as action");
-
+		    
 		    diagnostic("matched action: ",std::quoted(action->name),"\n");
 		    
 		    matchin.matchWhiteSpaceOrComments();
@@ -1711,26 +1729,19 @@ struct Grammar
 	      }
 	    while(matchin.matchChar('|'));
 	    
-	    if(matchin.matchChar(';'))
-	      {
+	    if((matchRes.state=matchin.matchChar(';')))
 		diagnostic("Found production statement end\n");
-		undoer.defuse();
-		
-		res=true;
-	      }
 	  }
       }
     
-    return res;
+    return matchRes;
   }
   
   constexpr bool matchAndParseWhitespaceStatement(Matching& matchin)
   {
-    bool res{false};
-    
     /// Undo if not matching
-    auto undoer=
-      matchin.temptativeMatch();
+    auto matchRes=
+      matchin.beginTemptativeMatch("whitespace statement",false);
     
     matchin.matchWhiteSpaceOrComments();
     
@@ -1747,14 +1758,10 @@ struct Grammar
 	    matchin.matchWhiteSpaceOrComments();
 	  }
 	
-	res=matchin.matchChar(';');
-	
-	diagnostic("In function ",__PRETTY_FUNCTION__," line ",__LINE__," matcher at ",std::quoted(matchin.ref),"\n");
-	if(res)
-	  undoer.defuse();
+	matchRes.state=matchin.matchChar(';');
       }
     
-    return res;
+    return matchRes;
   }
   
   constexpr Grammar(const std::string_view& str) :

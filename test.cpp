@@ -2,20 +2,23 @@
 
 constexpr void test()
 {
+      parseTreeFromRegex("(\\+|\\-)?[0-9]+","(\\+|\\-)?[0-9]+(\\.[0-9]+)?((e|E)(\\+|\\-)?[0-9]+)?","[^h]");
   // constexpr auto specs=createParserFromRegex("c|d(f?|g)","anna","[ciao]",".*");
   // constexpr auto parser=createParserFromRegex<specs>("c|d(f?|g)","anna","[ciao]",".*");
-  constexpr auto specs=estimateRegexParserSize("(\\+|\\-)?[0-9]+","(\\+|\\-)?[0-9]+(\\.[0-9]+)?((e|E)(\\+|\\-)?[0-9]+)?","[^h]");
-  constexpr auto parser=createParserFromRegex<specs>("(\\+|\\-)?[0-9]+","(\\+|\\-)?[0-9]+(\\.[0-9]+)?((e|E)(\\+|\\-)?[0-9]+)?","[^h]");
-  // if(constexpr auto u=parser.parse("-332.235e-34"))
+  // constexpr auto specs=estimateRegexParserSize("(\\+|\\-)?[0-9]+","(\\+|\\-)?[0-9]+(\\.[0-9]+)?((e|E)(\\+|\\-)?[0-9]+)?","[^h]");
+  // constexpr auto parser=createParserFromRegex<specs>("(\\+|\\-)?[0-9]+","(\\+|\\-)?[0-9]+(\\.[0-9]+)?((e|E)(\\+|\\-)?[0-9]+)?","[^h]");
+  // // if(constexpr auto u=parser.parse("-332.235e-34"))
+  // //   printf("tok %zu\n",*u);
+  // if(constexpr auto u=parser.parse("i"))
   //   printf("tok %zu\n",*u);
-  if(constexpr auto u=parser.parse("i"))
-    printf("tok %zu\n",*u);
   
   // static_assert(parser.parse("3")==0);
 }
 
 int main(int narg,char** arg)
 {
+  test();
+  return 0;
   // Matching m("/* *ciao  d* \n mondo */    // come va \n qui { %left bene");
   
   constexpr char rrr[]="error_handling_calculator {\
