@@ -17,8 +17,9 @@ namespace Temptative
 {
   /// State of an action
   enum State : bool {UNACCEPTED,ACCEPTED};
-  
-  size_t nNestedActions=0;
+
+  /// Store the number of tempatative actions, to properly indent the diagnostic
+  inline size_t nNestedActions=0;
   
   /// When destroyed, performs the action unless the action is accepted
   template <typename F>
@@ -457,7 +458,7 @@ struct Matching
   }
   
   /// Matches a literal or regex, introduced and finished by delim, with no line break
-  constexpr std::optional<std::string_view> matchLiteralOrRegex(const char& delim)
+  constexpr std::string_view matchLiteralOrRegex(const char& delim)
   {
     /// Undo if not matched
     auto res=
@@ -494,19 +495,19 @@ struct Matching
   }
   
   /// Matches a literal, introduced and finished by ', with no line break
-  constexpr std::optional<std::string_view> matchLiteral()
+  constexpr std::string_view matchLiteral()
   {
     return matchLiteralOrRegex('\'');
   }
   
   /// Matches a regex, introduced and finished by ", with no line break
-  constexpr std::optional<std::string_view> matchRegex()
+  constexpr std::string_view matchRegex()
   {
     return matchLiteralOrRegex('"');
   }
   
   /// Matches an identifier
-  constexpr std::optional<std::string_view> matchId()
+  constexpr std::string_view matchId()
   {
     auto matchRes=
       this->beginTemptativeMatch("matchId",false);
@@ -1542,6 +1543,8 @@ struct GrammarProduction
   std::vector<GrammarSymbol*> rhs;
   
   const GrammarSymbol* precedenceSymbol;
+  
+  std::string_view action;
 };
 
 struct GrammarSymbol
@@ -1612,12 +1615,12 @@ struct Grammar
     
     if(m.matchStr("error"))
       return &symbols[iErrorSymbol];
-    else if(auto l=m.matchLiteral())
-      return insertOrFindSymbol(*l,GrammarSymbol::Type::TERMINAL_SYMBOL);
-    else if(auto r=m.matchRegex())
-      return insertOrFindSymbol(*r,GrammarSymbol::Type::TERMINAL_SYMBOL);
-    else if(auto i=m.matchId())
-      return insertOrFindSymbol(*i,GrammarSymbol::Type::NON_TERMINAL_SYMBOL);
+    else if(auto l=m.matchLiteral();not l.empty())
+      return insertOrFindSymbol(l,GrammarSymbol::Type::TERMINAL_SYMBOL);
+    else if(auto r=m.matchRegex();not r.empty())
+      return insertOrFindSymbol(r,GrammarSymbol::Type::TERMINAL_SYMBOL);
+    else if(auto i=m.matchId();not i.empty())
+      return insertOrFindSymbol(i,GrammarSymbol::Type::NON_TERMINAL_SYMBOL);
 				
     return nullptr;
   }
@@ -1675,10 +1678,10 @@ struct Grammar
     
     matchin.matchWhiteSpaceOrComments();
     
-    if(auto i=matchin.matchId())
+    if(auto i=matchin.matchId();not i.empty())
       {
 	auto lhs=
-	  insertOrFindSymbol(*i,GrammarSymbol::Type::NON_TERMINAL_SYMBOL);
+	  insertOrFindSymbol(i,GrammarSymbol::Type::NON_TERMINAL_SYMBOL);
 	diagnostic("Found lhs: ",lhs->name,"\n");
 	
 	matchin.matchWhiteSpaceOrComments();
@@ -1707,17 +1710,15 @@ struct Grammar
 		    matchin.matchWhiteSpaceOrComments();
 		  }
 		
-		GrammarSymbol* action{};
+		std::string_view action{};
 		if(matchin.matchChar('['))
 		  {
 		    matchin.matchWhiteSpaceOrComments();
 		    
-		    if(auto i=matchin.matchId())
-		      action=insertOrFindSymbol(*i,GrammarSymbol::Type::NON_TERMINAL_SYMBOL);
-		    else
+		    if(action=matchin.matchId();not action.empty())
 		      errorEmitter("Expected identifier to be used as action");
 		    
-		    diagnostic("matched action: ",std::quoted(action->name),"\n");
+		    diagnostic("matched action: ",std::quoted(action),"\n");
 		    
 		    matchin.matchWhiteSpaceOrComments();
 		    if(not matchin.matchChar(']'))
@@ -1726,7 +1727,7 @@ struct Grammar
 		    matchin.matchWhiteSpaceOrComments();
 		  }
 		
-#warning working here here
+		productions.emplace_back(lhs,rhs,precedenceSymbol,action);
 	      }
 	    while(matchin.matchChar('|'));
 	    
@@ -1751,12 +1752,18 @@ struct Grammar
 	diagnostic("Matched whitespace statement\n");
 	
 	matchin.matchWhiteSpaceOrComments();
-	
-	while(auto l=matchin.matchRegex())
+
+	bool goon=true;;
+	while(goon)
 	  {
-	    whitespaceTokens.emplace_back(*l,iWhitespaceSymbol);
-	    diagnostic("Matched regex ",*l,"\n");
-	    matchin.matchWhiteSpaceOrComments();
+	    auto l=matchin.matchRegex();
+	    if(not l.empty())
+	      {
+		whitespaceTokens.emplace_back(l,iWhitespaceSymbol);
+		diagnostic("Matched regex ",l,"\n");
+		matchin.matchWhiteSpaceOrComments();
+	      }
+	    else goon=false;
 	  }
 	
 	matchRes.state=matchin.matchChar(';');
@@ -1785,11 +1792,11 @@ struct Grammar
     
     match.matchWhiteSpaceOrComments();
     
-    if(auto id=match.matchId())
+    if(auto id=match.matchId();not id.empty())
       {
-	name=*id;
+	name=id;
 	
-	diagnostic("Matched grammar: ",std::quoted(*id),", skipped to ",match.ref.begin(),"\n");
+	diagnostic("Matched grammar: ",std::quoted(id),", skipped to ",match.ref.begin(),"\n");
 	
 	match.matchWhiteSpaceOrComments();
 	
