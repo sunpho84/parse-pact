@@ -322,14 +322,18 @@ struct Matching
     auto matchRes=
       beginTemptativeMatch("matchStr",true);
     
-    while(matchRes and (not (str.empty() or ref.empty())))
-      if((matchRes.state&=ref.starts_with(str.front())))
+    diagnostic("Trying to match ",str,"\n");
+    
+    while(matchRes and not (str.empty() or ref.empty()))
+      if(matchRes.state&=ref.starts_with(str.front()))
 	{
 	  // diagnostic("matched ",str.front(),"\n");
 	  
 	  advance();
 	  str.remove_prefix(1);
 	}
+    
+    matchRes.state&=str.empty();
     
     return matchRes;
   }
