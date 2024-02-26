@@ -1845,8 +1845,6 @@ struct Grammar
     // Check that all symbols are referenced at least once
     for(const auto& s : symbols)
       if(s.type==NON_TERMINAL_SYMBOL and s.productions.empty() and not s.referredAsPrecedenceSymbol)
-	{	diagnostic(s.name);
-    errorEmitter("Unreferenced symbol");
-  }
+	errorEmitter("Unreferenced symbol");
   }
 };
