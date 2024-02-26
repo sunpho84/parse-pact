@@ -519,14 +519,17 @@ struct Matching
     if(std::string_view beg=ref;
        (not ref.empty()) and charMultiMatches(ref.front(),std::make_tuple(CharClasses::alpha,'_')))
       {
+	// diagnostic("Matched ",ref.front(),"\n");
 	advance();
 	while((not ref.empty()) and CharClasses::charIsInClass<CharClasses::WORD>(ref.front()))
 	  {
-	    // printf("Matched %c\n",ref.front());
+	    // diagnostic("Matched ",ref.front(),"\n");
 	    advance();
 	  }
 	
 	matchRes.accept();
+	
+	// diagnostic("Matched: ",std::string_view{beg.begin(),ref.begin()},"\n");
 	
 	return std::string_view{beg.begin(),ref.begin()};
       }
@@ -1813,9 +1816,19 @@ struct Grammar
 		  matchAndParseProductionStatement(match))
 	      diagnostic("parsed\n");
 	    
-	    if(match.matchChar('}'))
-	      diagnostic("Parsing finished\n");
+	    if(not match.matchChar('}'))
+	      diagnostic("Unfinished grammar\n");
+	    
+	    match.matchWhiteSpaceOrComments();
+	    if(not match.ref.empty())
+	      errorEmitter("Unfinished parsing!\n");
+	    else
+	      diagnostic("Grammar parsing correctly ended\n");
 	  }
+	else
+	  errorEmitter("Empty grammar\n");
       }
+    else
+      errorEmitter("Unmatched id to name the grammar\n");
   }
 };
