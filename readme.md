@@ -22,19 +22,29 @@ In the following example we show the regex parser in action, detecting a json re
 
 int main()
 {
-  /// Integer number in the json format
-  static constexpr char jsonInt[]="(\\+|\\-)?[0-9]+";
+  /// Recognized token
+  enum {JSON_NUMBER,JSON_REAL_NUMER,TEXT_NOT_CONTAINING_H};
   
-  /// Real number in the json format
-  static constexpr char jsonReal[]="(\\+|\\-)?[0-9]+(\\.[0-9]+)?((e|E)(\\+|\\-)?[0-9]+)?";
+  /// Pattern to recognize a number
+  constexpr char jsonNumberPattern[]="(\\+|\\-)?[0-9]+";
   
-  /// Estimate the constexpr parser size
-  constexpr auto parserSize=estimateRegexParserSize(jsonInt,jsonReal);
+  /// Pattern to recognize a real number
+  constexpr char jsonRealNumberPattern[]="(\\+|\\-)?[0-9]+(\\.[0-9]+)?((e|E)(\\+|\\-)?[0-9]+)?";
   
-  /// Creates the parser
-  constexpr auto parser=createParserFromRegex<parserSize>(jsonInt,jsonReal);
+  /// Pattern to recognize a string not containing char 'h'
+  constexpr char testNotContainingHPattern[]="[^h]+";
   
-  static_assert(*parser.parse("-332.235e-34")==1);
+  /////////////////////////////////////////////////////////////////
+  
+  /// Storage properties of the regex pattern matcher
+  constexpr auto specs=estimateRegexParserSize(jsonNumberPattern,jsonRealNumberPattern,testNotContainingHPattern);
+  
+  /// Regex parser matcher
+  constexpr auto parser=createParserFromRegex<specs>(jsonNumberPattern,jsonRealNumberPattern,testNotContainingHPattern);
+  
+  static_assert(parser.parse("-332.235e-34")==JSON_REAL_NUMER);
+  static_assert(parser.parse("33")==JSON_NUMBER);
+  static_assert(parser.parse("ello world!")==TEXT_NOT_CONTAINING_H);
   
   return 0;
 }
