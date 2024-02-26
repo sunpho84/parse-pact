@@ -1809,12 +1809,6 @@ struct Grammar
 		  matchAndParseProductionStatement(match))
 	      diagnostic("parsed\n");
 	    
-#warning working here
-	    // do match.matchWhiteSpaceOrComments();
-	    // while(matchAndParseAssociativityStatement(match) or
-	    // 	  matchAndParseWhitespaceDefinition() or
-	    // 	  matchAndParseProduction());
-	    
 	    if(match.matchChar('}'))
 	      diagnostic("Parsing finished\n");
 	  }
