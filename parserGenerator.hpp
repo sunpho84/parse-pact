@@ -1572,6 +1572,7 @@ struct GrammarSymbol
   
   bool referredAsPrecedenceSymbol;
   
+  /// Productions which reduce to this symbol
   std::vector<GrammarProduction*> productions;
 };
 
@@ -1691,6 +1692,13 @@ struct Grammar
 	  insertOrFindSymbol(i,GrammarSymbol::Type::NON_TERMINAL_SYMBOL);
 	diagnostic("Found lhs: ",lhs->name,"\n");
 	
+	// Add the first symbol found as a starting reduction
+	if(productions.empty())
+	  {
+	    productions.emplace_back(&symbols[iStartSymbol],std::vector<GrammarSymbol*>{lhs},nullptr,std::string_view{});
+	    symbols[iStartSymbol].productions.emplace_back(&productions.back());
+	  }
+	
 	matchin.matchWhiteSpaceOrComments();
 	if(matchin.matchChar(':'))
 	  {
@@ -1735,6 +1743,7 @@ struct Grammar
 		  }
 		
 		productions.emplace_back(lhs,rhs,precedenceSymbol,action);
+		lhs->productions.push_back(&productions.back());
 	      }
 	    while(matchin.matchChar('|'));
 	    
@@ -1830,5 +1839,14 @@ struct Grammar
       }
     else
       errorEmitter("Unmatched id to name the grammar\n");
+    
+    /////////////////////////////////////////////////////////////////
+    
+    // Check that all symbols are referenced at least once
+    for(const auto& s : symbols)
+      if(s.type==NON_TERMINAL_SYMBOL and s.productions.empty() and not s.referredAsPrecedenceSymbol)
+	{	diagnostic(s.name);
+    errorEmitter("Unreferenced symbol");
+  }
   }
 };
