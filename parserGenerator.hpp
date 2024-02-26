@@ -1722,7 +1722,7 @@ struct Grammar
 		  {
 		    matchin.matchWhiteSpaceOrComments();
 		    
-		    if(action=matchin.matchId();not action.empty())
+		    if(action=matchin.matchId();action.empty())
 		      errorEmitter("Expected identifier to be used as action");
 		    
 		    diagnostic("matched action: ",std::quoted(action),"\n");
