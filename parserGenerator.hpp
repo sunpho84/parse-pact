@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cstdio>
@@ -17,7 +18,7 @@ namespace Temptative
 {
   /// State of an action
   enum State : bool {UNACCEPTED,ACCEPTED};
-
+  
   /// Store the number of tempatative actions, to properly indent the diagnostic
   inline size_t nNestedActions=0;
   
@@ -1572,6 +1573,9 @@ struct GrammarSymbol
   
   bool referredAsPrecedenceSymbol;
   
+  /// Id of the grammar symbol
+  size_t id;
+  
   /// Productions which reduce to this symbol
   std::vector<GrammarProduction*> productions;
 };
@@ -1842,9 +1846,37 @@ struct Grammar
     
     /////////////////////////////////////////////////////////////////
     
-    // Check that all symbols are referenced at least once
-    for(const auto& s : symbols)
-      if(s.type==NON_TERMINAL_SYMBOL and s.productions.empty() and not s.referredAsPrecedenceSymbol)
-	errorEmitter("Unreferenced symbol");
+    /// Count of symbols usage
+    std::vector<size_t> symbolsCount(symbols.size(),0);
+    
+    // Number the symbol and perform several checks
+    for(size_t iSymbol=0;iSymbol<symbols.size();iSymbol++)
+      {
+	/// Take a reference to the symbol
+	GrammarSymbol& s=symbols[iSymbol];
+	
+	// Number the symbol
+	s.id=iSymbol;
+	
+	// Check that all symbols are referenced at least once and defined
+	if(s.type==NON_TERMINAL_SYMBOL and s.productions.empty() and not s.referredAsPrecedenceSymbol)
+	  errorEmitter("Undefined symbol");
+	
+	// Count the symbol usage
+	for(const GrammarProduction& production : productions)
+	  {
+	    for(const GrammarSymbol* r : production.rhs)
+	      symbolsCount[r->id]++;
+	    //symbolsCount[production.lhs->id]++;
+	    if(auto p=production.precedenceSymbol)
+	      symbolsCount[p->id]++;
+	  }
+      }
+    
+    for(size_t iSymbol=0;iSymbol<symbols.size();iSymbol++)
+      if(const std::array<size_t,4> filt{iStartSymbol,iEndSymbol,iErrorSymbol,iWhitespaceSymbol};
+	 std::find(filt.begin(),filt.end(),iSymbol)!=filt.end())
+	if(symbolsCount[iSymbol]==0)
+	  errorEmitter("Unreferenced symbol");
   }
 };
