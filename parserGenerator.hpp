@@ -112,9 +112,24 @@ struct StaticPolymorphic
   }
 };
 
+/// Possibly adds an element to a unique elements vector
+template <typename T>
+constexpr bool maybeAddToUniqueVector(std::vector<T>& v,
+				      const T& x)
+{
+  /// Check if the element is present
+  const bool notPresent=
+    (std::find(v.begin(),v.end(),x)==v.end());
+    
+  if(notPresent)
+    v.emplace_back(x);
+  
+  return notPresent;
+}
+
 ///Matches a single char condition
 static constexpr bool charMultiMatches(const char& c,
-				  const char& m)
+				       const char& m)
 {
   return c==m;
 }
@@ -256,7 +271,7 @@ struct Matching
 			      [back=*this,
 			       this]()
     {
-       diagnostic("not accepted, putting back ref ",this->ref.begin(),"->",back.ref.begin(),"\n");
+       diagnostic("not accepted, putting back ref \"",this->ref.begin(),"\" -> \"",back.ref.begin(),"\"\n");
       *this=back;
     },acceptedByDefault);
   }
@@ -1542,15 +1557,13 @@ constexpr auto estimateRegexParserSize(const T*...str)
 
 /////////////////////////////////////////////////////////////////
 
-struct GrammarSymbol;
-
 struct GrammarProduction
 {
-  GrammarSymbol* lhs;
+  size_t lhs;
   
-  std::vector<GrammarSymbol*> rhs;
+  std::vector<size_t> rhs;
   
-  const GrammarSymbol* precedenceSymbol;
+  std::optional<size_t> precedenceSymbol;
   
   std::string_view action;
 };
@@ -1577,7 +1590,23 @@ struct GrammarSymbol
   size_t id;
   
   /// Productions which reduce to this symbol
-  std::vector<GrammarProduction*> productions;
+  std::vector<size_t> iProductions;
+  
+  bool nullable;
+  
+  std::vector<size_t> firsts;
+  
+  constexpr GrammarSymbol(const std::string_view& name,
+			  const Type& type) :
+    name(name),
+    type(type),
+    associativity(Associativity::NONE),
+    precedence(0),
+    precedenceSymbol(nullptr),
+    referredAsPrecedenceSymbol(false),
+    nullable(false)
+  {
+  }
 };
 
 struct RegexToken
@@ -1607,26 +1636,31 @@ struct Grammar
   
   std::vector<RegexToken> whitespaceTokens;
   
-  constexpr GrammarSymbol* insertOrFindSymbol(const std::string_view& name,
-					      const GrammarSymbol::Type& type)
+  constexpr size_t insertOrFindSymbol(const std::string_view& name,
+				      const GrammarSymbol::Type& type)
   {
+    GrammarSymbol* s;
+    
     if(auto ref=
        std::ranges::find_if(symbols,
-			    [&name](const GrammarSymbol& s)
+			    [&name,
+			     &type](const GrammarSymbol& s)
 			    {
-			      return s.name==name;
+			      return s.name==name and s.type==type;
 			    });ref!=symbols.end())
-      return &(*ref);
+      s=&(*ref);
     else
-      return &symbols.emplace_back(name,type);
+      s=&symbols.emplace_back(name,type);
+    
+    return std::distance(symbols.begin(),(std::vector<GrammarSymbol>::iterator)s);
   }
   
-  constexpr GrammarSymbol* matchAndParseSymbol(Matching& m)
+  constexpr std::optional<size_t> matchAndParseSymbol(Matching& m)
   {
     m.matchWhiteSpaceOrComments();
     
     if(m.matchStr("error"))
-      return &symbols[iErrorSymbol];
+      return iErrorSymbol;
     else if(auto l=m.matchLiteral();not l.empty())
       return insertOrFindSymbol(l,GrammarSymbol::Type::TERMINAL_SYMBOL);
     else if(auto r=m.matchRegex();not r.empty())
@@ -1634,7 +1668,7 @@ struct Grammar
     else if(auto i=m.matchId();not i.empty())
       return insertOrFindSymbol(i,GrammarSymbol::Type::NON_TERMINAL_SYMBOL);
 				
-    return nullptr;
+    return std::nullopt;
   }
   
   constexpr bool matchAndParseAssociativityStatement(Matching& matchin)
@@ -1666,10 +1700,11 @@ struct Grammar
 	
 	while(auto m=matchAndParseSymbol(matchin))
 	  {
-	    diagnostic("Matched symbol: ",std::quoted(m->name),"\n");
+	    GrammarSymbol& s=symbols[*m];
+	    diagnostic("Matched symbol: ",std::quoted(s.name),"\n");
 	    
-	    m->associativity=currentAssociativity;
-	    m->precedence=currentPrecedence;
+	    s.associativity=currentAssociativity;
+	    s.precedence=currentPrecedence;
 	  }
 	
 	matchin.matchWhiteSpaceOrComments();
@@ -1692,15 +1727,16 @@ struct Grammar
     
     if(auto i=matchin.matchId();not i.empty())
       {
-	auto lhs=
+	auto iLhs=
 	  insertOrFindSymbol(i,GrammarSymbol::Type::NON_TERMINAL_SYMBOL);
-	diagnostic("Found lhs: ",lhs->name,"\n");
+	diagnostic("Found lhs: ",symbols[iLhs].name,"\n");
 	
 	// Add the first symbol found as a starting reduction
 	if(productions.empty())
 	  {
-	    productions.emplace_back(&symbols[iStartSymbol],std::vector<GrammarSymbol*>{lhs},nullptr,std::string_view{});
-	    symbols[iStartSymbol].productions.emplace_back(&productions.back());
+	    // Add the rule as a starting rule
+	    productions.emplace_back(iStartSymbol,std::vector<size_t>{iLhs});
+	    symbols[iStartSymbol].iProductions.emplace_back(0);
 	  }
 	
 	matchin.matchWhiteSpaceOrComments();
@@ -1709,20 +1745,20 @@ struct Grammar
 	    do
 	      {
 		/// Right hand side of the production
-		std::vector<GrammarSymbol*> rhs;
+		std::vector<size_t> iRhss;
 		matchin.matchWhiteSpaceOrComments();
-		while(GrammarSymbol* matchedSymbol=matchAndParseSymbol(matchin))
+		while(std::optional<size_t> iMatchedSymbol=matchAndParseSymbol(matchin))
 		  {
-		    rhs.push_back(matchedSymbol);
+		    iRhss.push_back(*iMatchedSymbol);
 		    matchin.matchWhiteSpaceOrComments();
-		    diagnostic("Found rhs: ",matchedSymbol->name,"\n");
+		    diagnostic("Found rhs: ",symbols[*iMatchedSymbol].name,"\n");
 		  }
 		
-		GrammarSymbol* precedenceSymbol;
+		std::optional<size_t> iPrecedenceSymbol;
 		if(matchin.matchStr("%precedence"))
 		  {
-		    if((precedenceSymbol=matchAndParseSymbol(matchin)))
-		      precedenceSymbol->referredAsPrecedenceSymbol=true;
+		    if((iPrecedenceSymbol=matchAndParseSymbol(matchin)))
+		      symbols[*iPrecedenceSymbol].referredAsPrecedenceSymbol=true;
 		    else
 		      errorEmitter("Expected symbol from which to infer the precedence");
 		    
@@ -1746,8 +1782,8 @@ struct Grammar
 		    matchin.matchWhiteSpaceOrComments();
 		  }
 		
-		productions.emplace_back(lhs,rhs,precedenceSymbol,action);
-		lhs->productions.push_back(&productions.back());
+		symbols[iLhs].iProductions.push_back(productions.size());
+		productions.emplace_back(iLhs,iRhss,iPrecedenceSymbol,action);
 	      }
 	    while(matchin.matchChar('|'));
 	    
@@ -1772,7 +1808,7 @@ struct Grammar
 	diagnostic("Matched whitespace statement\n");
 	
 	matchin.matchWhiteSpaceOrComments();
-
+	
 	bool goon=true;;
 	while(goon)
 	  {
@@ -1792,6 +1828,55 @@ struct Grammar
     return matchRes;
   }
   
+  /// Computes the first elements
+  constexpr size_t calculateFirsts(const size_t& iS)
+  {
+    size_t added=0;
+    
+    GrammarSymbol& s=symbols[iS];
+    diagnostic("Processing symbol ",s.name,"\n");
+    if(s.type==GrammarSymbol::Type::NON_TERMINAL_SYMBOL)
+      for(const size_t& iP : s.iProductions)
+	{
+	  const GrammarProduction& p=productions[iP];
+	  diagnostic("  Processing production ",iP,", lhs: ",symbols[p.lhs].name," before added: ",added,", rhs size: ",p.rhs.size(),"\n");
+	  
+	  bool nonNullableFound=false;
+	  for(size_t iRhs=0;iRhs<p.rhs.size() and not nonNullableFound;iRhs++)
+	    {
+	      const size_t iT=p.rhs[iRhs];
+	      nonNullableFound|=not symbols[iT].nullable;
+	      diagnostic("  Not at symbols end, adding ",symbols[iT].name,"\n");
+	      
+	      diagnostic("  Symbol ",symbols[iT].name," firsts:\n");
+	      for(const auto& iF : symbols[iT].firsts)
+		{
+		  diagnostic("   ",symbols[iF].name,"\n");
+		  const bool isAdded=maybeAddToUniqueVector(s.firsts,iF);
+		  added+=isAdded;
+		  if(isAdded)
+		    diagnostic("   added ",symbols[iF].name,"\n");
+		}
+	    }
+	  
+	  if(not nonNullableFound)
+	    {
+	      if(not s.nullable)
+		{
+		  diagnostic("nullable changed\n");
+		  added++;
+		}
+	      s.nullable=true;
+	    }
+	}
+    else
+      added+=maybeAddToUniqueVector(s.firsts,s.id);
+    
+    diagnostic("  nadded: ",added,"\n");
+    
+    return added;
+  }
+  
   constexpr Grammar(const std::string_view& str) :
     currentPrecedence(0)
   {
@@ -1805,7 +1890,7 @@ struct Grammar
 	   {".whitespace",NULL_SYMBOL,&iWhitespaceSymbol}})
       {
 	*i=symbols.size();
-	symbols.emplace_back(name,type,GrammarSymbol::Associativity::NONE,0);
+	symbols.emplace_back(name,type);
       }
     
     Matching match(str);
@@ -1827,10 +1912,11 @@ struct Grammar
 	    while(matchAndParseAssociativityStatement(match) or
 		  matchAndParseWhitespaceStatement(match) or
 		  matchAndParseProductionStatement(match))
-	      diagnostic("parsed\n");
+	      diagnostic("parsed some statement\n");
 	    
+	    match.matchWhiteSpaceOrComments();
 	    if(not match.matchChar('}'))
-	      diagnostic("Unfinished grammar\n");
+	      diagnostic("Unfinished grammar, reference is: \"",match.ref,"\"\n");
 	    
 	    match.matchWhiteSpaceOrComments();
 	    if(not match.ref.empty())
@@ -1846,37 +1932,59 @@ struct Grammar
     
     /////////////////////////////////////////////////////////////////
     
-    /// Count of symbols usage
-    std::vector<size_t> symbolsCount(symbols.size(),0);
-    
-    // Number the symbol and perform several checks
+    // Number the symbols
     for(size_t iSymbol=0;iSymbol<symbols.size();iSymbol++)
+      symbols[iSymbol].id=iSymbol;
+    
+    // Check that all symbols are referenced at least once and defined
+    for(const GrammarSymbol& s : symbols)
+      if(s.type==NON_TERMINAL_SYMBOL and s.iProductions.empty() and not s.referredAsPrecedenceSymbol)
+	errorEmitter("Undefined symbol");
+    
+    /// Count of symbols usage as rhs or precedence
+    std::vector<size_t> symbolsCount(symbols.size(),0);
+    for(const GrammarProduction& production : productions)
       {
-	/// Take a reference to the symbol
-	GrammarSymbol& s=symbols[iSymbol];
+	for(const size_t& r : production.rhs)
+	  symbolsCount[r]++;
 	
-	// Number the symbol
-	s.id=iSymbol;
-	
-	// Check that all symbols are referenced at least once and defined
-	if(s.type==NON_TERMINAL_SYMBOL and s.productions.empty() and not s.referredAsPrecedenceSymbol)
-	  errorEmitter("Undefined symbol");
-	
-	// Count the symbol usage
-	for(const GrammarProduction& production : productions)
-	  {
-	    for(const GrammarSymbol* r : production.rhs)
-	      symbolsCount[r->id]++;
-	    //symbolsCount[production.lhs->id]++;
-	    if(auto p=production.precedenceSymbol)
-	      symbolsCount[p->id]++;
-	  }
+	if(auto p=production.precedenceSymbol)
+	  symbolsCount[symbols[*p].id]++;
       }
     
+    /// Check that the symbols are used
     for(size_t iSymbol=0;iSymbol<symbols.size();iSymbol++)
       if(const std::array<size_t,4> filt{iStartSymbol,iEndSymbol,iErrorSymbol,iWhitespaceSymbol};
-	 std::find(filt.begin(),filt.end(),iSymbol)!=filt.end())
+	 std::find(filt.begin(),filt.end(),iSymbol)==filt.end())
 	if(symbolsCount[iSymbol]==0)
-	  errorEmitter("Unreferenced symbol");
+	  {
+	    diagnostic("Symbol ",symbols[iSymbol].name," ",iSymbol," ",iStartSymbol,"\n");
+	    errorEmitter("Unreferenced symbol");
+	  }
+    
+    diagnostic("-----------------------------------\n");
+    
+    for(const GrammarSymbol& s : symbols)
+      diagnostic("symbol ",s.name,"\n");
+    diagnostic("\n");
+    
+    for(bool added=true;added;)
+      {
+	added=false;
+	for(size_t iS=0;iS<symbols.size();iS++)
+	  added|=calculateFirsts(iS);
+	diagnostic("Finished looping on all symbols to find firsts, added something: ",added,"\n");
+      }
+    
+    for(const GrammarSymbol& s : symbols)
+      {
+	diagnostic("symbol ",s.name," firsts:\n");
+	for(const auto& iF : s.firsts)
+	  diagnostic("   ",symbols[iF].name,"\n");
+      }
+    
+    // for(size_t iSymbol=0;iSymbol<symbols.size();iSymbol++)
+    //   if(const auto& s=symbols[iSymbol];s.type==GrammarSymbol::Type::NULL_SYMBOL)
+    // 	diagnostic("Symbol ",s.name," has null type\n");
   }
 };
