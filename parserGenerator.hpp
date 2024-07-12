@@ -1927,10 +1927,10 @@ struct Grammar
 	//   diagnostic("  ",symbols[iS].name," ",iS,"\n");
 	
 	bool nonNullableFound=false;
-	size_t iLastBeforeOut=p.rhs.size()-1;
-	for(size_t iRhs=p.rhs.size()-1;iRhs<p.rhs.size() and not nonNullableFound;iRhs--)
+	size_t iLastBeforeOut=p.rhsS.size()-1;
+	for(size_t iRhs=p.rhsS.size()-1;iRhs<p.rhsS.size() and not nonNullableFound;iRhs--)
 	  {
-	    GrammarSymbol& curSymbol=symbols[p.rhs[iRhs]];
+	    GrammarSymbol& curSymbol=symbols[p.rhsS[iRhs]];
 	    for(const auto& iF : s.follows)
 	      {
 		const bool isAdded=maybeAddToUniqueVector(curSymbol.follows,iF);
@@ -1944,19 +1944,19 @@ struct Grammar
 	    iLastBeforeOut=iRhs;
 	  }
 	
-	for(size_t iRhs=0;iRhs+1<p.rhs.size();iRhs++)
+	for(size_t iRhs=0;iRhs+1<p.rhsS.size();iRhs++)
 	  {
 	    // diagnostic("checking previous iRhs ",iRhs," , ",symbols[p.rhs[iRhs]].name," and symbol iLastBeforeOut ",iLastBeforeOut," , ",symbols[p.rhs[iLastBeforeOut]].name,"\n");
-	    for(const auto& iF : symbols[p.rhs[iLastBeforeOut]].firsts)
+	    for(const auto& iF : symbols[p.rhsS[iLastBeforeOut]].firsts)
 	      {
-		const bool isAdded=maybeAddToUniqueVector(symbols[p.rhs[iRhs]].follows,iF);
+		const bool isAdded=maybeAddToUniqueVector(symbols[p.rhsS[iRhs]].follows,iF);
 		added+=isAdded;
 		// if(isAdded)
 		//   diagnostic("   Added ",symbols[iF].name," from firsts (",std::to_string(1+nonNullableFound),") of ",symbols[p.rhs[iLastBeforeOut]].name," to follows of ",symbols[p.rhs[iRhs]].name,"\n");
 	      }
 	  }
       }
-
+    
     return added;
   }
   
@@ -2028,7 +2028,7 @@ struct Grammar
     std::vector<size_t> symbolsCount(symbols.size(),0);
     for(const GrammarProduction& production : productions)
       {
-	for(const size_t& r : production.rhs)
+	for(const size_t& r : production.rhsS)
 	  symbolsCount[r]++;
 	
 	if(auto p=production.precedenceSymbol)
@@ -2087,5 +2087,27 @@ struct Grammar
     // for(size_t iSymbol=0;iSymbol<symbols.size();iSymbol++)
     //   if(const auto& s=symbols[iSymbol];s.type==GrammarSymbol::Type::NULL_SYMBOL)
     // 	diagnostic("Symbol ",s.name," has null type\n");
+    
+    // Set the precedence
+    diagnostic("/////////////////////////////////////////////////////////////////\n");
+    for(auto& p : productions)
+      {
+	diagnostic("Production ",std::quoted(p.describe(symbols)),"\n");
+	for(size_t iiRhs=p.rhsS.size()-1;iiRhs<p.rhsS.size() and not p.precedenceSymbol;iiRhs--)
+	  {
+	    const size_t iRhs=p.rhsS[iiRhs];
+	    diagnostic(" probing symbol ",iRhs," (\"",symbols[iRhs].name,"\"), type: ",(int)symbols[iRhs].type,"\n");
+	    if(symbols[iRhs].type==GrammarSymbol::Type::TERMINAL_SYMBOL)
+	      {
+		p.precedenceSymbol=iRhs;
+		diagnostic(" precedence symbol: ",symbols[iRhs].name,"\n");
+	      }
+	  }
+      }
+    
+    // Report the precedence
+    for(auto& p : productions)
+      if(const auto& pp=p.precedenceSymbol)
+	diagnostic("Precedence symbol for production ",std::quoted(p.describe(symbols)),": ",symbols[*pp].name,"\n");
   }
 };
