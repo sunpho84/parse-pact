@@ -1873,12 +1873,12 @@ struct Grammar
       for(const size_t& iP : s.iProductions)
 	{
 	  const GrammarProduction& p=productions[iP];
-	  diagnostic("  Processing production ",iP,", lhs: ",symbols[p.lhs].name," before added: ",added,", rhs size: ",p.rhs.size(),"\n");
+	  diagnostic("  Processing production ",iP,", lhs: ",symbols[p.lhs].name," before added: ",added,", rhs size: ",p.rhsS.size(),"\n");
 	  
 	  bool nonNullableFound=false;
-	  for(size_t iRhs=0;iRhs<p.rhs.size() and not nonNullableFound;iRhs++)
+	  for(size_t iRhs=0;iRhs<p.rhsS.size() and not nonNullableFound;iRhs++)
 	    {
-	      const size_t iT=p.rhs[iRhs];
+	      const size_t iT=p.rhsS[iRhs];
 	      nonNullableFound|=not symbols[iT].nullable;
 	      diagnostic("  Not at symbols end, adding ",symbols[iT].name,"\n");
 	      
