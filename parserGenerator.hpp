@@ -1557,33 +1557,27 @@ constexpr auto estimateRegexParserSize(const T*...str)
 
 /////////////////////////////////////////////////////////////////
 
-struct GrammarProduction
-{
-  size_t lhs;
-  
-  std::vector<size_t> rhs;
-  
-  std::optional<size_t> precedenceSymbol;
-  
-  std::string_view action;
-};
-
 struct GrammarSymbol
 {
+  /// View on the string defining the symbol
   std::string_view name;
   
+  /// Possible types of a symbol
   enum class Type{NULL_SYMBOL,TERMINAL_SYMBOL,NON_TERMINAL_SYMBOL,END_SYMBOL};
   
+  //// Type of this symbol
   Type type;
   
+  /// Possible associativities of a symbol
   enum class Associativity{NONE,LEFT,RIGHT};
   
+  /// Associativity of this symbol
   Associativity associativity;
   
+  /// Precedence of this symbol
   size_t precedence;
   
-  GrammarSymbol* precedenceSymbol;
-  
+  /// Store if this symbol has been used to assign explicitly the reference to others
   bool referredAsPrecedenceSymbol;
   
   /// Id of the grammar symbol
@@ -1592,10 +1586,13 @@ struct GrammarSymbol
   /// Productions which reduce to this symbol
   std::vector<size_t> iProductions;
   
+  /// ermine if this symbol is nullable
   bool nullable;
   
+  /// Determine the first elements of the subtree that must match something
   std::vector<size_t> firsts;
   
+  /// Determine the following elements
   std::vector<size_t> follows;
   
   constexpr GrammarSymbol(const std::string_view& name,
@@ -1604,10 +1601,43 @@ struct GrammarSymbol
     type(type),
     associativity(Associativity::NONE),
     precedence(0),
-    precedenceSymbol(nullptr),
     referredAsPrecedenceSymbol(false),
     nullable(false)
   {
+  }
+};
+
+/// Production rule
+struct GrammarProduction
+{
+  /// Symbol on the lhs of the production
+  size_t lhs;
+  
+  /// Symbols on the rhs of the production
+  std::vector<size_t> rhsS;
+  
+  /// Possible symbol specifiying the precedence of the production
+  std::optional<size_t> precedenceSymbol;
+  
+  /// Name of the action to be accomplished when matching
+  std::string_view action;
+  
+  /// Returns the prouction listed in a string
+  std::string describe(const std::vector<GrammarSymbol>& symbols) const
+  {
+    /// Returned string
+    std::string out;
+    
+    out+=symbols[lhs].name;
+    out+=" =";
+    
+    for(const auto& iRhs : rhsS)
+      {
+	out+=" ";
+	out+=symbols[iRhs].name;
+      }
+    
+    return out;
   }
 };
 
