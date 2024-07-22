@@ -1586,6 +1586,9 @@ struct GrammarSymbol
   /// Productions which reduce to this symbol
   std::vector<size_t> iProductions;
   
+  /// Productions reachable by the rightmost derivation, from this symbol, by the first production symbol
+  std::vector<size_t> iProductionsReachableByFirstSymbol;
+  
   /// ermine if this symbol is nullable
   bool nullable;
   
@@ -1614,7 +1617,7 @@ struct GrammarProduction
   size_t lhs;
   
   /// Symbols on the rhs of the production
-  std::vector<size_t> rhsS;
+  std::vector<size_t> iRhsList;
   
   /// Possible symbol specifiying the precedence of the production
   std::optional<size_t> precedenceSymbol;
@@ -1631,7 +1634,7 @@ struct GrammarProduction
     out+=symbols[lhs].name;
     out+=" =";
     
-    for(const auto& iRhs : rhsS)
+    for(const auto& iRhs : iRhsList)
       {
 	out+=" ";
 	out+=symbols[iRhs].name;
@@ -1816,6 +1819,8 @@ struct Grammar
 		
 		symbols[iLhs].iProductions.push_back(productions.size());
 		productions.emplace_back(iLhs,iRhss,iPrecedenceSymbol,action);
+		
+		diagnostic("ADDED production ",productions.back().describe(symbols),"\n");
 	      }
 	    while(matchin.matchChar('|'));
 	    
@@ -1873,12 +1878,12 @@ struct Grammar
       for(const size_t& iP : s.iProductions)
 	{
 	  const GrammarProduction& p=productions[iP];
-	  diagnostic("  Processing production ",iP,", lhs: ",symbols[p.lhs].name," before added: ",added,", rhs size: ",p.rhsS.size(),"\n");
+	  diagnostic("  Processing production ",iP,", lhs: ",symbols[p.lhs].name," before added: ",added,", rhs size: ",p.iRhsList.size(),"\n");
 	  
 	  bool nonNullableFound=false;
-	  for(size_t iRhs=0;iRhs<p.rhsS.size() and not nonNullableFound;iRhs++)
+	  for(size_t iRhs=0;iRhs<p.iRhsList.size() and not nonNullableFound;iRhs++)
 	    {
-	      const size_t iT=p.rhsS[iRhs];
+	      const size_t iT=p.iRhsList[iRhs];
 	      nonNullableFound|=not symbols[iT].nullable;
 	      diagnostic("  Not at symbols end, adding ",symbols[iT].name,"\n");
 	      
@@ -1927,10 +1932,10 @@ struct Grammar
 	//   diagnostic("  ",symbols[iS].name," ",iS,"\n");
 	
 	bool nonNullableFound=false;
-	size_t iLastBeforeOut=p.rhsS.size()-1;
-	for(size_t iRhs=p.rhsS.size()-1;iRhs<p.rhsS.size() and not nonNullableFound;iRhs--)
+	size_t iLastBeforeOut=p.iRhsList.size()-1;
+	for(size_t iRhs=p.iRhsList.size()-1;iRhs<p.iRhsList.size() and not nonNullableFound;iRhs--)
 	  {
-	    GrammarSymbol& curSymbol=symbols[p.rhsS[iRhs]];
+	    GrammarSymbol& curSymbol=symbols[p.iRhsList[iRhs]];
 	    for(const auto& iF : s.follows)
 	      {
 		const bool isAdded=maybeAddToUniqueVector(curSymbol.follows,iF);
@@ -1944,12 +1949,12 @@ struct Grammar
 	    iLastBeforeOut=iRhs;
 	  }
 	
-	for(size_t iRhs=0;iRhs+1<p.rhsS.size();iRhs++)
+	for(size_t iRhs=0;iRhs+1<p.iRhsList.size();iRhs++)
 	  {
 	    // diagnostic("checking previous iRhs ",iRhs," , ",symbols[p.rhs[iRhs]].name," and symbol iLastBeforeOut ",iLastBeforeOut," , ",symbols[p.rhs[iLastBeforeOut]].name,"\n");
-	    for(const auto& iF : symbols[p.rhsS[iLastBeforeOut]].firsts)
+	    for(const auto& iF : symbols[p.iRhsList[iLastBeforeOut]].firsts)
 	      {
-		const bool isAdded=maybeAddToUniqueVector(symbols[p.rhsS[iRhs]].follows,iF);
+		const bool isAdded=maybeAddToUniqueVector(symbols[p.iRhsList[iRhs]].follows,iF);
 		added+=isAdded;
 		// if(isAdded)
 		//   diagnostic("   Added ",symbols[iF].name," from firsts (",std::to_string(1+nonNullableFound),") of ",symbols[p.rhs[iLastBeforeOut]].name," to follows of ",symbols[p.rhs[iRhs]].name,"\n");
@@ -2028,7 +2033,7 @@ struct Grammar
     std::vector<size_t> symbolsCount(symbols.size(),0);
     for(const GrammarProduction& production : productions)
       {
-	for(const size_t& r : production.rhsS)
+	for(const size_t& r : production.iRhsList)
 	  symbolsCount[r]++;
 	
 	if(auto p=production.precedenceSymbol)
@@ -2089,13 +2094,13 @@ struct Grammar
     // 	diagnostic("Symbol ",s.name," has null type\n");
     
     // Set the precedence
-    diagnostic("/////////////////////////////////////////////////////////////////\n");
+    diagnostic("-----------------------------------\n");
     for(auto& p : productions)
       {
 	diagnostic("Production ",std::quoted(p.describe(symbols)),"\n");
-	for(size_t iiRhs=p.rhsS.size()-1;iiRhs<p.rhsS.size() and not p.precedenceSymbol;iiRhs--)
+	for(size_t iiRhs=p.iRhsList.size()-1;iiRhs<p.iRhsList.size() and not p.precedenceSymbol;iiRhs--)
 	  {
-	    const size_t iRhs=p.rhsS[iiRhs];
+	    const size_t iRhs=p.iRhsList[iiRhs];
 	    diagnostic(" probing symbol ",iRhs," (\"",symbols[iRhs].name,"\"), type: ",(int)symbols[iRhs].type,"\n");
 	    if(symbols[iRhs].type==GrammarSymbol::Type::TERMINAL_SYMBOL)
 	      {
@@ -2109,5 +2114,58 @@ struct Grammar
     for(auto& p : productions)
       if(const auto& pp=p.precedenceSymbol)
 	diagnostic("Precedence symbol for production ",std::quoted(p.describe(symbols)),": ",symbols[*pp].name,"\n");
+    
+    // Pre-compute goto states to anticipate their additions
+    diagnostic("-----------------------------------\n");
+    
+    diagnostic("Productions--------\n");
+    for(const GrammarProduction& p : productions)
+      diagnostic(p.describe(symbols),"\n");
+    diagnostic("Productions end--------\n");
+    diagnostic("HERE\n");
+    //int i=0;
+    for(GrammarSymbol& s : symbols)
+      {
+	std::vector<size_t> reachable;
+	
+	auto lookForRachableProductionsOfSymbol=
+	  [this,&reachable](const auto& self,
+			    GrammarSymbol& curS)->void
+	  {
+	    for(const size_t iP : curS.iProductions)
+	      if(const GrammarProduction& p=productions[iP];p.iRhsList.size())
+		{
+		  /// Production reached by the first symbol, potentially included in the list
+		  //for(size_t j=0;j<i;j++) diagnostic(" ");
+		  diagnostic("testing production ",productions[iP].describe(symbols)," \n");
+		  if(std::find(reachable.begin(),reachable.end(),iP)==reachable.end())
+		    {
+		      //for(size_t j=0;j<i;j++) diagnostic(" ");
+		    reachable.push_back(iP);
+		    //i+=3;
+		    self(self,symbols[productions[iP].iRhsList.front()]);
+		    //i-=3;
+		  }
+		  else
+		    {
+		      //for(size_t j=0;j<i;j++) diagnostic(" ");
+		      diagnostic(" Not inserting it\n");
+		    }
+		}
+	  };
+	
+	lookForRachableProductionsOfSymbol(lookForRachableProductionsOfSymbol,s);
+	
+	for(const size_t& iP : reachable)
+	  {
+	    diagnostic("->     actually inserting production ",productions[iP].describe(symbols)," which allows to reach ",s.name,", first symbol: ",symbols[productions[iP].iRhsList.front()].name,"\n");
+	    s.iProductionsReachableByFirstSymbol.push_back(iP);
+	  }
+      }
+    
+    for(const GrammarSymbol& s : symbols)
+      for(const size_t& iP :  s.iProductionsReachableByFirstSymbol)
+	diagnostic("Symbol ",
+		   std::quoted(s.name)," can be reached through production ",std::quoted(productions[iP].describe(symbols))," whose first symbol is ",std::quoted(symbols[productions[iP].iRhsList.front()].name),"\n");
   }
 };
