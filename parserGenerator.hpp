@@ -117,8 +117,7 @@ template <typename T>
 constexpr std::pair<bool,size_t> maybeAddToUniqueVector(std::vector<T>& v,
 							const T& x)
 {
-  if(auto it=
-    std::find(v.begin(),v.end(),x);it==v.end())
+  if(auto it=std::find(v.begin(),v.end(),x);it==v.end())
     {
       v.push_back(x);
       return {true,v.size()-1};
@@ -1657,9 +1656,6 @@ struct GrammarItem
   /// Position of the dot
   size_t position;
   
-  /// Index
-  size_t id;
-  
   /// Returns the prouction listed in a string
   std::string describe(const std::vector<GrammarProduction>& productions,
 		       const std::vector<GrammarSymbol>& symbols) const
@@ -1705,19 +1701,22 @@ struct GrammarTransition
 };
 
 /// State in the parser state machine
-struct GrammarState
+struct GrammarState :
+  std::vector<GrammarItem>
 {
-  /// Items defining the positions within the grammar that this state represents
-  std::vector<GrammarItem> items;
-  
-  /// Index of transitions from this state by symbol index
-  std::vector<size_t> iTransitionsBySymbolIndex;
-  
-  /// Transitions from this state
-  std::vector<GrammarTransition> transitions;
-  
-  /// The index of this state
-  size_t id;
+  void addClosure(const std::vector<GrammarProduction>& productions,
+		  const std::vector<GrammarSymbol>& symbols)
+  {
+    for(size_t iItem=0;iItem<this->size();iItem++)
+      {
+	const GrammarItem& item=(*this)[iItem];
+	
+	if(const std::vector<size_t>& iRhsList=productions[item.iProduction].iRhsList;item.position<iRhsList.size())
+	for(const size_t& iProduction : symbols[iRhsList[item.position]].iProductions)
+	  if(maybeAddToUniqueVector((*this),{iProduction,0}).first)
+		diagnostic("  Adding to the closure of \"",productions[this->front().iProduction].describe(symbols),"\" production: \"",productions[iProduction].describe(symbols),"\"\n");
+      }
+  }
   
   auto operator<=>(const GrammarState& oth) const = default;
 };
@@ -2249,8 +2248,7 @@ struct Grammar
     diagnostic("-----------------------------------\n");
     
     std::vector<GrammarState> grammarStates;
-    
-    std::vector<GrammarTransition> grammarTransitions;
+    std::vector<std::vector<GrammarTransition>> grammarTransitionsPerState;
     
     const size_t iStartSymbolFirstProduction=
       symbols[iStartSymbol].iProductions.front();
@@ -2260,23 +2258,7 @@ struct Grammar
     
     diagnostic("Start state first production: ",productions[iStartSymbolFirstProduction].describe(symbols),"\n");
     
-    const auto makeStateClosure=
-      [this](const auto& self,
-	     std::vector<GrammarItem>& items)->void
-      {
-	const GrammarItem& item=items.back();
-	
-	if(const std::vector<size_t>& iRhsList=productions[item.iProduction].iRhsList;iRhsList.size())
-	  for(const size_t& iProduction : symbols[iRhsList[item.position]].iProductions)
-	    if(maybeAddToUniqueVector(items,{iProduction,0}).first)
-	      {
-		diagnostic("  Adding to the closure of \"",productions[items.front().iProduction].describe(symbols),"\" production: \"",productions[iProduction].describe(symbols),"\"\n");
-		
-		self(self,items);
-	      }
-      };
-    
-    makeStateClosure(makeStateClosure,startState.items);
+    startState.addClosure(productions,symbols);
     
     for(std::vector<size_t> iStates{0},iNextStates;iStates.size();iStates=iNextStates)
       {
@@ -2288,39 +2270,59 @@ struct Grammar
 	      {
 		GrammarState gotoState;
 		
-		for(const GrammarItem& item : grammarStates[iState].items)
+		for(const GrammarItem& item : grammarStates[iState])
 		  if(item.position<productions[item.iProduction].iRhsList.size())
 		    {
 		      const size_t& iNextSymbol=productions[item.iProduction].iRhsList[item.position];
 		      
 		      if(iSymbol==iNextSymbol)
-			maybeAddToUniqueVector(gotoState.items,{item.iProduction,item.position+1});
+			maybeAddToUniqueVector(gotoState,{item.iProduction,item.position+1});
 		      for(const size_t& iProduction : symbols[iNextSymbol].iProductionsReachableByFirstSymbol)
 			{
 			  if(const GrammarProduction& production=productions[iProduction];production.iRhsList[0]==iSymbol)
-			    maybeAddToUniqueVector(gotoState.items,{iProduction,1});
+			    maybeAddToUniqueVector(gotoState,{iProduction,1});
 			}
 		    }
 		
-		if(gotoState.items.size())
+		if(gotoState.size())
 		  {
+		    /// Search the goto state in the list of states
 		    const auto [inserted,iGotoState]=maybeAddToUniqueVector(grammarStates,gotoState);
 		    if(inserted)
-		      iNextStates.push_back(iGotoState);
+		      {
+			iNextStates.push_back(iGotoState);
+			grammarTransitionsPerState.emplace_back();
+		      }
 		    
-		    grammarTransitions.emplace_back(iSymbol,iGotoState);
-		    //grammarStates[position].addShiftTransition();
+		    diagnostic("Emplacing in state:\n");
+		    for(const GrammarItem& it : grammarStates[iState])
+		      diagnostic(" | ",it.describe(productions,symbols)," \n");
+		    diagnostic(" the transition mediated by symbol \"",symbols[iSymbol].name,"\" to state \n");
+		    for(const GrammarItem& it : grammarStates[iGotoState])
+		      diagnostic("     | ",it.describe(productions,symbols)," \n");
+		    
+ 		    grammarTransitionsPerState[iState].emplace_back(iSymbol,iGotoState);
 		  }
 	      }
       }
     
-    for(const auto& s : grammarStates)
+    for(size_t iState=0;iState<grammarStates.size();iState++)
       {
 	diagnostic("--\n");
 	
-	for(const GrammarItem& it : s.items)
-	  diagnostic(it.describe(productions,symbols)," \n");
+	diagnostic("State:\n\n");
+	for(const GrammarItem& it : grammarStates[iState])
+	  diagnostic("| ",it.describe(productions,symbols)," \n");
+	
+	for(const GrammarTransition& t : grammarTransitionsPerState[iState])
+	  {
+	    diagnostic("\n   \"",symbols[t.iSymbol].name,"\" transits to state: \n\n");
+	    for(const GrammarItem& it : grammarStates[t.iState])
+	      diagnostic("     | ",it.describe(productions,symbols)," \n");
+	  }
       }
     
+    for(auto& s : grammarStates)
+      s.addClosure(productions,symbols);
   }
 };
