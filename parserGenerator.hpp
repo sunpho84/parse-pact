@@ -198,7 +198,7 @@ static constexpr bool charMultiMatches(const char& c,
 
 ///Matches either char of a string
 static constexpr bool charMultiMatches(const char& c,
-				  const char* str)
+				       const char* str)
 {
   while(*str!='\0')
     if(*(str++)==c)
@@ -209,7 +209,7 @@ static constexpr bool charMultiMatches(const char& c,
 
 /// Matches a range
 static constexpr bool charMultiMatches(const char& c,
-				  const std::pair<char,char>& range)
+				       const std::pair<char,char>& range)
 {
   return c>=range.first and c<range.second;
 }
@@ -1749,6 +1749,83 @@ struct GrammarItem
   auto operator<=>(const GrammarItem&) const = default;
 };
 
+/// State in the parser state machine
+struct GrammarState
+{
+  std::vector<size_t> iItems;
+  
+  constexpr GrammarState createGotoState(const size_t& iSymbol,
+					 std::vector<GrammarItem>& items,
+					 const std::vector<GrammarProduction>& productions,
+					 const std::vector<GrammarSymbol>& symbols) const
+  {
+    GrammarState gotoState;
+    
+    for(const size_t& iItem : iItems)
+      {
+	const GrammarItem& item=items[iItem];
+	if(item.position<productions[item.iProduction].iRhsList.size())
+	  {
+	    const size_t& iNextSymbol=productions[item.iProduction].iRhsList[item.position];
+	    
+	    auto add=
+	      [&gotoState,
+	       &items](const size_t iProduction,
+		       const size_t position)
+	      {
+		const auto [res,iAdded]=maybeAddToUniqueVector(items,{iProduction,position});
+		maybeAddToUniqueVector(gotoState.iItems,iAdded);
+	      };
+	    
+	    if(iSymbol==iNextSymbol)
+	      add(item.iProduction,item.position+1);
+	    
+	    for(const size_t& iProduction : symbols[iNextSymbol].iProductionsReachableByFirstSymbol)
+	      if(const GrammarProduction& production=productions[iProduction];production.iRhsList[0]==iSymbol)
+		add(iProduction,1);
+	  }
+      }
+    
+    return gotoState;
+  }
+  
+  constexpr inline void addClosure(std::vector<GrammarItem>& items,
+				   const std::vector<GrammarProduction>& productions,
+				   const std::vector<GrammarSymbol>& symbols)
+  {
+    for(size_t iIItem=0;iIItem<iItems.size();iIItem++)
+      {
+	/// As we might be modifying items
+	auto item=
+	  [&]()
+	  {
+	    return items[iItems[iIItem]];
+	  };
+	
+	if(const std::vector<size_t>& iRhsList=productions[item().iProduction].iRhsList;item().position<iRhsList.size())
+	  for(const size_t& iProduction : symbols[iRhsList[item().position]].iProductions)
+	    {
+	      if(const size_t iItem=maybeAddToUniqueVector(items,{iProduction,0}).second;maybeAddToUniqueVector(iItems,iItem).first)
+		diagnostic("  Adding to the closure of \"",productions[item().iProduction].describe(symbols),"\" production: \"",productions[iProduction].describe(symbols),"\"\n");
+	    }
+      }
+  }
+  
+  inline std::string describe(const std::vector<GrammarItem>& items,
+			      const std::vector<GrammarProduction>& productions,
+			      const std::vector<GrammarSymbol>& symbols,
+			      const std::string& pref="") const
+  {
+    std::string out;
+    for(const size_t& iItem : iItems)
+      out+=pref+"| "+items[iItem].describe(productions,symbols)+"\n";
+    
+    return out;
+  }
+  
+  auto operator<=>(const GrammarState& oth) const = default;
+};
+
 /// Transition in the parser state machine.
 struct GrammarTransition
 {
@@ -1761,28 +1838,21 @@ struct GrammarTransition
   /// Production reduced to or null for shifts
   size_t iProd;
   
-  auto operator<=>(const GrammarTransition& oth) const = default;
-};
-
-/// State in the parser state machine
-struct GrammarState :
-  std::vector<GrammarItem>
+  std::string describe(const std::vector<GrammarItem>& items,
+		       const std::vector<GrammarProduction>& productions,
+		       const std::vector<GrammarSymbol>& symbols,
+		       const std::vector<GrammarState>& states) const
 {
-  constexpr inline void addClosure(const std::vector<GrammarProduction>& productions,
-				   const std::vector<GrammarSymbol>& symbols)
-  {
-    for(size_t iItem=0;iItem<this->size();iItem++)
-      {
-	const GrammarItem& item=(*this)[iItem];
-	
-	if(const std::vector<size_t>& iRhsList=productions[item.iProduction].iRhsList;item.position<iRhsList.size())
-	for(const size_t& iProduction : symbols[iRhsList[item.position]].iProductions)
-	  if(maybeAddToUniqueVector((*this),{iProduction,0}).first)
-		diagnostic("  Adding to the closure of \"",productions[this->front().iProduction].describe(symbols),"\" production: \"",productions[iProduction].describe(symbols),"\"\n");
-      }
-  }
+  std::string out;
   
-  auto operator<=>(const GrammarState& oth) const = default;
+  out+="   \"";
+  out+=symbols[iSymbol].name;
+  out+="\" transits to state: \n"+states[iState].describe(items,productions,symbols,"       ");
+  
+  return out;
+}
+  
+  auto operator<=>(const GrammarTransition& oth) const = default;
 };
 
 struct RegexToken
