@@ -126,6 +126,69 @@ constexpr std::pair<bool,size_t> maybeAddToUniqueVector(std::vector<T>& v,
     return {false,std::distance(v.begin(),it)};
 }
 
+/////////////////////////////////////////////////////////////////
+
+/// Custom bitset
+struct BitSet
+{
+  /// Number of bits
+  const size_t n;
+  
+  /// Stored data
+  char* data;
+  
+  /// Returns the size
+  constexpr size_t size() const
+  {
+    return n;
+  }
+  
+  /// Construct allowing n bits
+  constexpr BitSet(const size_t& n) :
+    n(n),
+    data(new char[(n+7)%8])
+  {
+  }
+  
+  /// Desetructor
+  ~BitSet()
+  {
+    delete[] data;
+  }
+  
+  /// Set a given bit
+  constexpr void set(const size_t& iEl,
+		     const bool& b) &
+  {
+    const size_t i=iEl/8;
+    const char j=iEl%8;
+    char& f=data[i];
+    const char mask=~(char(1)<<j);
+    const char add=char(b)<<j;
+    
+    f=(f&mask)|add;
+  }
+  
+  /// Access a given bit
+  constexpr bool get(const size_t& iEl) const
+  {
+    const size_t i=iEl/8;
+    const char j=iEl%8;
+    const char& f=data[i];
+    const char mask=char(1)<<j;
+    
+    return f&mask;
+  }
+  
+  /// Subscribe a bit
+  constexpr bool operator[](const size_t& iEl) const
+  {
+    return get(iEl);
+  }
+};
+
+/////////////////////////////////////////////////////////////////
+
 ///Matches a single char condition
 static constexpr bool charMultiMatches(const char& c,
 				       const char& m)
@@ -1604,6 +1667,7 @@ struct GrammarSymbol
     associativity(Associativity::NONE),
     precedence(0),
     referredAsPrecedenceSymbol(false),
+    id(0),
     nullable(false)
   {
   }
@@ -1627,7 +1691,7 @@ struct GrammarProduction
   std::string_view action;
   
   /// Returns the prouction listed in a string
-  std::string describe(const std::vector<GrammarSymbol>& symbols) const
+  constexpr inline std::string describe(const std::vector<GrammarSymbol>& symbols) const
   {
     /// Returned string
     std::string out;
@@ -1657,8 +1721,8 @@ struct GrammarItem
   size_t position;
   
   /// Returns the prouction listed in a string
-  std::string describe(const std::vector<GrammarProduction>& productions,
-		       const std::vector<GrammarSymbol>& symbols) const
+  constexpr inline std::string describe(const std::vector<GrammarProduction>& productions,
+					const std::vector<GrammarSymbol>& symbols) const
   {
     const GrammarProduction& production=productions[iProduction];
     
@@ -1704,8 +1768,8 @@ struct GrammarTransition
 struct GrammarState :
   std::vector<GrammarItem>
 {
-  void addClosure(const std::vector<GrammarProduction>& productions,
-		  const std::vector<GrammarSymbol>& symbols)
+  constexpr inline void addClosure(const std::vector<GrammarProduction>& productions,
+				   const std::vector<GrammarSymbol>& symbols)
   {
     for(size_t iItem=0;iItem<this->size();iItem++)
       {
@@ -1885,7 +1949,7 @@ struct Grammar
 		    if(action=matchin.matchId();action.empty())
 		      errorEmitter("Expected identifier to be used as action");
 		    
-		    diagnostic("matched action: ",std::quoted(action),"\n");
+		    diagnostic("matched action: \"",action,"\"\n");
 		    
 		    matchin.matchWhiteSpaceOrComments();
 		    if(not matchin.matchChar(']'))
@@ -2066,7 +2130,7 @@ struct Grammar
       {
 	name=id;
 	
-	diagnostic("Matched grammar: ",std::quoted(id),", skipped to ",match.ref.begin(),"\n");
+	diagnostic("Matched grammar: \"",id,"\", skipped to ",match.ref.begin(),"\n");
 	
 	match.matchWhiteSpaceOrComments();
 	
@@ -2174,7 +2238,7 @@ struct Grammar
     diagnostic("-----------------------------------\n");
     for(auto& p : productions)
       {
-	diagnostic("Production ",std::quoted(p.describe(symbols)),"\n");
+	diagnostic("Production \"",p.describe(symbols),"\"\n");
 	for(size_t iiRhs=p.iRhsList.size()-1;iiRhs<p.iRhsList.size() and not p.precedenceSymbol;iiRhs--)
 	  {
 	    const size_t iRhs=p.iRhsList[iiRhs];
@@ -2190,7 +2254,7 @@ struct Grammar
     // Report the precedence
     for(auto& p : productions)
       if(const auto& pp=p.precedenceSymbol)
-	diagnostic("Precedence symbol for production ",std::quoted(p.describe(symbols)),": ",symbols[*pp].name,"\n");
+	diagnostic("Precedence symbol for production \"",p.describe(symbols),"\": ",symbols[*pp].name,"\n");
     
     // Pre-compute goto states to anticipate their additions
     diagnostic("-----------------------------------\n");
@@ -2241,8 +2305,7 @@ struct Grammar
     
     for(const GrammarSymbol& s : symbols)
       for(const size_t& iP :  s.iProductionsReachableByFirstSymbol)
-	diagnostic("Symbol ",
-		   std::quoted(s.name)," can be reached through production ",std::quoted(productions[iP].describe(symbols))," whose first symbol is ",std::quoted(symbols[productions[iP].iRhsList.front()].name),"\n");
+	diagnostic("Symbol \"",s.name,"\" can be reached through production \"",productions[iP].describe(symbols),"\" whose first symbol is \"",symbols[productions[iP].iRhsList.front()].name,"\"\n");
     
     // Generates the states
     diagnostic("-----------------------------------\n");
