@@ -135,7 +135,7 @@ struct BitSet
   const size_t n;
   
   /// Stored data
-  char* data;
+  std::vector<char> data;
   
   /// Returns the size
   constexpr size_t size() const
@@ -146,14 +146,8 @@ struct BitSet
   /// Construct allowing n bits
   constexpr BitSet(const size_t& n) :
     n(n),
-    data(new char[(n+7)%8])
+    data((n+7)/8)
   {
-  }
-  
-  /// Desetructor
-  ~BitSet()
-  {
-    delete[] data;
   }
   
   /// Set a given bit
@@ -1811,10 +1805,10 @@ struct GrammarState
       }
   }
   
-  inline std::string describe(const std::vector<GrammarItem>& items,
-			      const std::vector<GrammarProduction>& productions,
-			      const std::vector<GrammarSymbol>& symbols,
-			      const std::string& pref="") const
+  constexpr inline std::string describe(const std::vector<GrammarItem>& items,
+					const std::vector<GrammarProduction>& productions,
+					const std::vector<GrammarSymbol>& symbols,
+					const std::string& pref="") const
   {
     std::string out;
     for(const size_t& iItem : iItems)
@@ -1838,19 +1832,19 @@ struct GrammarTransition
   /// Production reduced to or null for shifts
   size_t iProd;
   
-  std::string describe(const std::vector<GrammarItem>& items,
-		       const std::vector<GrammarProduction>& productions,
-		       const std::vector<GrammarSymbol>& symbols,
-		       const std::vector<GrammarState>& states) const
-{
-  std::string out;
-  
-  out+="   \"";
-  out+=symbols[iSymbol].name;
-  out+="\" transits to state: \n"+states[iState].describe(items,productions,symbols,"       ");
-  
-  return out;
-}
+  constexpr inline std::string describe(const std::vector<GrammarItem>& items,
+					const std::vector<GrammarProduction>& productions,
+					const std::vector<GrammarSymbol>& symbols,
+					const std::vector<GrammarState>& states) const
+  {
+    std::string out;
+    
+    out+="   \"";
+    out+=symbols[iSymbol].name;
+    out+="\" transits to state: \n"+states[iState].describe(items,productions,symbols,"       ");
+    
+    return out;
+  }
   
   auto operator<=>(const GrammarTransition& oth) const = default;
 };
@@ -1868,15 +1862,15 @@ struct Grammar
   
   std::vector<GrammarSymbol> symbols;
   
-  size_t iStartSymbol;
+  size_t iStartSymbol{};
   
-  size_t iEndSymbol;
+  size_t iEndSymbol{};
   
-  size_t iErrorSymbol;
+  size_t iErrorSymbol{};
   
-  size_t iWhitespaceSymbol;
+  size_t iWhitespaceSymbol{};
   
-  size_t currentPrecedence;
+  size_t currentPrecedence{};
   
   std::vector<GrammarProduction> productions;
   
@@ -2380,18 +2374,14 @@ struct Grammar
     // Generates the states
     diagnostic("-----------------------------------\n");
     
-    std::vector<GrammarState> grammarStates;
-    std::vector<std::vector<GrammarTransition>> grammarTransitionsPerState;
+    std::vector<GrammarState> grammarStates{GrammarState{std::vector<size_t>{0}}};
+    std::vector<std::vector<GrammarTransition>> grammarTransitionsPerState(1);
+    std::vector<GrammarItem> grammarItems{{symbols[iStartSymbol].iProductions.front(),0}};
     
-    const size_t iStartSymbolFirstProduction=
-      symbols[iStartSymbol].iProductions.front();
-    const GrammarItem startItem{iStartSymbolFirstProduction,0};
-    GrammarState& startState=
-      grammarStates.emplace_back(std::vector<GrammarItem>{startItem});
+    const size_t iStartState=0;
+    diagnostic("Start state first production: ",productions[symbols[iStartSymbol].iProductions.front()].describe(symbols),"\n");
     
-    diagnostic("Start state first production: ",productions[iStartSymbolFirstProduction].describe(symbols),"\n");
-    
-    startState.addClosure(productions,symbols);
+    grammarStates[iStartState].addClosure(grammarItems,productions,symbols);
     
     for(std::vector<size_t> iStates{0},iNextStates;iStates.size();iStates=iNextStates)
       {
@@ -2400,62 +2390,108 @@ struct Grammar
 	for(const size_t& iState : iStates)
 	  for(size_t iSymbol=0;iSymbol<symbols.size();iSymbol++)
 	    if(iSymbol!=iEndSymbol)
-	      {
-		GrammarState gotoState;
-		
-		for(const GrammarItem& item : grammarStates[iState])
-		  if(item.position<productions[item.iProduction].iRhsList.size())
+	      if(const GrammarState gotoState=grammarStates[iState].createGotoState(iSymbol,grammarItems,productions,symbols);gotoState.iItems.size())
+		{
+		  /// Search the goto state in the list of states
+		  const auto [inserted,iGotoState]=maybeAddToUniqueVector(grammarStates,gotoState);
+		  
+		  if(inserted)
 		    {
-		      const size_t& iNextSymbol=productions[item.iProduction].iRhsList[item.position];
-		      
-		      if(iSymbol==iNextSymbol)
-			maybeAddToUniqueVector(gotoState,{item.iProduction,item.position+1});
-		      for(const size_t& iProduction : symbols[iNextSymbol].iProductionsReachableByFirstSymbol)
-			{
-			  if(const GrammarProduction& production=productions[iProduction];production.iRhsList[0]==iSymbol)
-			    maybeAddToUniqueVector(gotoState,{iProduction,1});
-			}
+		      iNextStates.push_back(iGotoState);
+		      grammarTransitionsPerState.emplace_back();
 		    }
-		
-		if(gotoState.size())
-		  {
-		    /// Search the goto state in the list of states
-		    const auto [inserted,iGotoState]=maybeAddToUniqueVector(grammarStates,gotoState);
-		    if(inserted)
-		      {
-			iNextStates.push_back(iGotoState);
-			grammarTransitionsPerState.emplace_back();
-		      }
-		    
-		    diagnostic("Emplacing in state:\n");
-		    for(const GrammarItem& it : grammarStates[iState])
-		      diagnostic(" | ",it.describe(productions,symbols)," \n");
-		    diagnostic(" the transition mediated by symbol \"",symbols[iSymbol].name,"\" to state \n");
-		    for(const GrammarItem& it : grammarStates[iGotoState])
-		      diagnostic("     | ",it.describe(productions,symbols)," \n");
-		    
- 		    grammarTransitionsPerState[iState].emplace_back(iSymbol,iGotoState);
-		  }
-	      }
+		  
+		  // diagnostic("Emplacing in state:\n");
+		  // for(const GrammarItem& it : grammarStates[iState])
+		  //   diagnostic(" | ",it.describe(productions,symbols)," \n");
+		  // diagnostic(" the transition mediated by symbol \"",symbols[iSymbol].name,"\" to state \n");
+		  // for(const GrammarItem& it : grammarStates[iGotoState])
+		  //   diagnostic("     | ",it.describe(productions,symbols)," \n");
+		  
+		  grammarTransitionsPerState[iState].emplace_back(iSymbol,iGotoState);
+		}
       }
     
     for(size_t iState=0;iState<grammarStates.size();iState++)
       {
 	diagnostic("--\n");
 	
-	diagnostic("State:\n\n");
-	for(const GrammarItem& it : grammarStates[iState])
-	  diagnostic("| ",it.describe(productions,symbols)," \n");
+	diagnostic("State:\n",grammarStates[iState].describe(grammarItems,productions,symbols));
+	diagnostic("has ",grammarTransitionsPerState[iState].size()," transitions:\n");
 	
-	for(const GrammarTransition& t : grammarTransitionsPerState[iState])
-	  {
-	    diagnostic("\n   \"",symbols[t.iSymbol].name,"\" transits to state: \n\n");
-	    for(const GrammarItem& it : grammarStates[t.iState])
-	      diagnostic("     | ",it.describe(productions,symbols)," \n");
-	  }
+	if(grammarTransitionsPerState[iState].size())
+	  for(const GrammarTransition& t : grammarTransitionsPerState[iState])
+	  diagnostic(t.describe(grammarItems,productions,symbols,grammarStates));
       }
     
     for(auto& s : grammarStates)
-      s.addClosure(productions,symbols);
+      s.addClosure(grammarItems,productions,symbols);
+    
+    // Generates the spontaneous lookeaheads
+    diagnostic("-----------------------------------\n");
+    
+    std::vector<BitSet> lookaheads(grammarItems.size(),symbols.size());
+    diagnostic("Building the lookhaeds for ",symbols.size()," symbols, read from lookaheads: ",lookaheads.front().n," nchars: ",lookaheads.front().data.size(),"\n");
+    lookaheads[0].set(iEndSymbol,1);
+    
+    for(const GrammarState& state : grammarStates)
+      for(const size_t iItem : state.iItems)
+	{
+	  const GrammarItem& item=grammarItems[iItem];
+	  const size_t& iProduction=item.iProduction;
+	  const GrammarProduction& production=productions[iProduction];
+	  
+	  diagnostic("Considering item ",item.describe(productions,symbols),"\n");
+	  
+	  if(item.position<production.iRhsList.size())
+	    {
+	      const size_t iSymbol=production.iRhsList[item.position];
+	      const GrammarSymbol& symbol=symbols[iSymbol];
+	      diagnostic(" at symbol: ",symbol.name,"\n");
+	      
+	      std::vector<size_t> toIns;
+	      for(size_t nonNullable=0,iOtherPosition=item.position+1;iOtherPosition<production.iRhsList.size() and nonNullable==0;iOtherPosition++)
+		{
+		  const size_t iOtherSymbol=production.iRhsList[iOtherPosition];
+		  const GrammarSymbol& otherSymbol=symbols[iOtherSymbol];
+		  
+		  for(const size_t& iFirst : otherSymbol.firsts)
+		    toIns.push_back(iFirst);
+		  
+		  nonNullable+=not otherSymbol.nullable;
+		}
+	      
+	      for(const size_t& iOtherProduction : symbol.iProductions)
+		{
+		  diagnostic(" Searching for production ",productions[iOtherProduction].describe(symbols),"\n");
+		  
+		  for(const size_t iOtherItem : state.iItems)
+		    if(grammarItems[iOtherItem]==GrammarItem{iOtherProduction,0})
+		      {
+			diagnostic("Adding to lookahead of item ",grammarItems[iOtherItem].describe(productions,symbols)," the symbols: \n");
+			for(const size_t& iIns : toIns)
+			  {
+			    lookaheads[iOtherItem].set(iIns,1);
+			    // for(const char& c : lookaheads[iOtherItem].data)
+			    //   diagnostic(lookaheads[iOtherItem].data.size()," -> ",(int)c,"\n");
+			    // diagnostic("\n");
+			    diagnostic("  ",symbols[iIns].name,"\n");
+			  }
+		      }
+		}
+	    }
+	}
+    
+    diagnostic("---\n");
+    for(size_t iItem=0;iItem<lookaheads.size();iItem++)
+      {
+	diagnostic("Item ",grammarItems[iItem].describe(productions,symbols)," contains the following lookahead:\n");
+	for(size_t iSymbol=0;iSymbol<symbols.size();iSymbol++)
+	  if(lookaheads[iItem].get(iSymbol))
+	    diagnostic("   ",symbols[iSymbol].name,"\n");
+	diagnostic("---\n");
+      }
+    
+    
   }
 };
