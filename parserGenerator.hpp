@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <numeric>
 #include <optional>
 #include <string_view>
 #include <vector>
@@ -146,7 +147,7 @@ struct BitSet
   /// Construct allowing n bits
   constexpr BitSet(const size_t& n) :
     n(n),
-    data((n+7)/8)
+    data((n+7)/8,0)
   {
   }
   
@@ -178,6 +179,22 @@ struct BitSet
   constexpr bool operator[](const size_t& iEl) const
   {
     return get(iEl);
+  }
+  
+  constexpr size_t insert(const BitSet& oth)
+  {
+    size_t r=0;
+    
+    for(size_t i=0;i<data.size();i++)
+      {
+	char c=data[i]^oth.data[i];
+	for(int i=0;i<8;i++)
+	  r+=(c>>i)&1;
+	  
+	data[i]|=oth.data[i];
+      }
+    
+    return r;
   }
 };
 
@@ -1701,6 +1718,18 @@ struct GrammarProduction
     
     return out;
   }
+  
+  /// Determine if nullable after the given position
+  constexpr inline bool isNullableAfter(const std::vector<GrammarSymbol>& symbols,
+					size_t position) const
+  {
+    bool res=true;
+    
+    while(res and position<iRhsList.size())
+      res&=symbols[iRhsList[position++]].nullable;
+    
+    return res;
+  }
 };
 
 /////////////////////////////////////////////////////////////////
@@ -1747,6 +1776,21 @@ struct GrammarItem
 struct GrammarState
 {
   std::vector<size_t> iItems;
+  
+  /// Search the passed item
+  constexpr std::optional<size_t> findItem(const std::vector<GrammarItem>& items,
+					   const GrammarItem& item) const
+  {
+    size_t iSearchItem=0;
+    
+    while(iSearchItem<iItems.size())
+      if(const size_t iItem=iItems[iSearchItem];items[iItem]==item)
+	return iItem;
+      else
+	iSearchItem++;
+    
+    return {};
+  }
   
   constexpr GrammarState createGotoState(const size_t& iSymbol,
 					 std::vector<GrammarItem>& items,
@@ -1847,6 +1891,22 @@ struct GrammarTransition
   }
   
   auto operator<=>(const GrammarTransition& oth) const = default;
+};
+
+/// Lookeahead
+struct Lookahead
+{
+  /// Symbols of the lookahead
+  BitSet symbolIs;
+  
+  /// List of lookaheads to which the lookahead propagates to
+  std::vector<size_t> iPropagateToItems;
+  
+  ///Constructor
+  constexpr Lookahead(const size_t& n) :
+    symbolIs(n)
+  {
+  }
 };
 
 struct RegexToken
@@ -2430,9 +2490,9 @@ struct Grammar
     // Generates the spontaneous lookeaheads
     diagnostic("-----------------------------------\n");
     
-    std::vector<BitSet> lookaheads(grammarItems.size(),symbols.size());
-    diagnostic("Building the lookhaeds for ",symbols.size()," symbols, read from lookaheads: ",lookaheads.front().n," nchars: ",lookaheads.front().data.size(),"\n");
-    lookaheads[0].set(iEndSymbol,1);
+    std::vector<Lookahead> lookaheads(grammarItems.size(),symbols.size());
+    diagnostic("Building the lookhaeds for ",symbols.size()," symbols, read from lookaheads: ",lookaheads.front().symbolIs.n," nchars: ",lookaheads.front().symbolIs.data.size(),"\n");
+    lookaheads[0].symbolIs.set(iEndSymbol,1);
     
     for(const GrammarState& state : grammarStates)
       for(const size_t iItem : state.iItems)
@@ -2471,7 +2531,7 @@ struct Grammar
 			diagnostic("Adding to lookahead of item ",grammarItems[iOtherItem].describe(productions,symbols)," the symbols: \n");
 			for(const size_t& iIns : toIns)
 			  {
-			    lookaheads[iOtherItem].set(iIns,1);
+			    lookaheads[iOtherItem].symbolIs.set(iIns,1);
 			    // for(const char& c : lookaheads[iOtherItem].data)
 			    //   diagnostic(lookaheads[iOtherItem].data.size()," -> ",(int)c,"\n");
 			    // diagnostic("\n");
@@ -2487,11 +2547,93 @@ struct Grammar
       {
 	diagnostic("Item ",grammarItems[iItem].describe(productions,symbols)," contains the following lookahead:\n");
 	for(size_t iSymbol=0;iSymbol<symbols.size();iSymbol++)
-	  if(lookaheads[iItem].get(iSymbol))
+	  if(lookaheads[iItem].symbolIs.get(iSymbol))
 	    diagnostic("   ",symbols[iSymbol].name,"\n");
 	diagnostic("---\n");
       }
     
+    // Generate goto items
+    diagnostic("-----------------------------------\n");
+    for(size_t iState=0;iState<grammarStates.size();iState++)
+      {
+	for(const GrammarTransition& transition : grammarTransitionsPerState[iState])
+	  for(const size_t& iItem : grammarStates[iState].iItems)
+	    {
+	      const GrammarItem& item=grammarItems[iItem];
+	      // const GrammarSymbol& symbol=symbols[transition.iSymbol];
+	      const GrammarProduction& production=productions[item.iProduction];
+	      if(production.iRhsList.size() and production.iRhsList[item.position]==transition.iSymbol)
+		maybeAddToUniqueVector(lookaheads[iItem].iPropagateToItems,*grammarStates[transition.iState].findItem(grammarItems,{item.iProduction,item.position+1}));
+	    }
+	
+	for(const size_t& iItem : grammarStates[iState].iItems)
+	  {
+	    const GrammarItem& item=grammarItems[iItem];
+	    const GrammarProduction& production=productions[item.iProduction];
+	    
+	    if(const size_t& position=item.position;
+	       position<production.iRhsList.size() and production.isNullableAfter(symbols,position+1))
+	      for(const size_t& iOtherProduction : symbols[production.iRhsList[position]].iProductions)
+		{
+		  if(const std::optional<size_t> maybeIGotoItem=grammarStates[iState].findItem(grammarItems,{iOtherProduction,0}))
+		    maybeAddToUniqueVector(lookaheads[iItem].iPropagateToItems,*maybeIGotoItem);
+		}
+	  }
+      }
+    
+    diagnostic("---\n");
+    for(size_t iItem=0;iItem<lookaheads.size();iItem++)
+      {
+	diagnostic("Item ",grammarItems[iItem].describe(productions,symbols)," propagates to:\n");
+	for(const size_t& iPropagateTo : lookaheads[iItem].iPropagateToItems)
+	  diagnostic("   ",grammarItems[iPropagateTo].describe(productions,symbols),"\n");
+      }
+    
+    // Propagates lookahead
+    diagnostic("-----------------------------------\n");
+    std::vector<size_t> iLookaheadsToInsert(lookaheads.size());
+    std::iota(iLookaheadsToInsert.begin(),iLookaheadsToInsert.end(),0);
+    for(std::vector<size_t> nextLookaheads;not iLookaheadsToInsert.empty();iLookaheadsToInsert.swap(nextLookaheads))
+      {
+	nextLookaheads.clear();
+	
+	for(const size_t& iLookahead : iLookaheadsToInsert)
+	  for(const Lookahead& lookahead=lookaheads[iLookahead];const size_t& iPropagateToItem : lookahead.iPropagateToItems)
+	    {
+	      const auto print=
+		[this,
+		 &lookaheads,
+		 &grammarItems](const size_t &iItem)
+		{
+		  std::string res;
+		  res+="item \""+grammarItems[iItem].describe(productions,symbols)+"\" containing the following symbols:\n";
+		  for(size_t iS=0;iS<symbols.size();iS++)
+		    if(lookaheads[iItem].symbolIs.get(iS))
+		      res+="  "+std::string(symbols[iS].name)+"\n";
+		  
+		  return res;
+		};
+	      
+	      diagnostic(" Lookahead ",print(iLookahead)," inserting into ",print(iPropagateToItem));
+	      
+	      
+	      const size_t n=lookaheads[iPropagateToItem].symbolIs.insert(lookahead.symbolIs);
+	  
+	      if(n) nextLookaheads.push_back(iPropagateToItem);
+	      
+	      diagnostic("inserted ",n," into ",grammarItems[iPropagateToItem].describe(productions,symbols),"\n\n");
+	      }
+      }
+    
+    diagnostic("---\n");
+    for(size_t iItem=0;iItem<lookaheads.size();iItem++)
+      {
+	diagnostic("Item ",grammarItems[iItem].describe(productions,symbols)," contains the following lookahead:\n");
+	for(size_t iSymbol=0;iSymbol<symbols.size();iSymbol++)
+	  if(lookaheads[iItem].symbolIs.get(iSymbol))
+	    diagnostic("   ",symbols[iSymbol].name,"\n");
+	diagnostic("---\n");
+      }
     
   }
 };
