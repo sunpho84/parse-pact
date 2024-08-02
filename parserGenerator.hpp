@@ -2584,7 +2584,11 @@ struct Grammar
     diagnostic("---\n");
     for(size_t iItem=0;iItem<lookaheads.size();iItem++)
       {
-	diagnostic("Item ",grammarItems[iItem].describe(productions,symbols)," propagates to:\n");
+	diagnostic("$ lookahead of symbols\n");
+	for(size_t iS=0;iS<symbols.size();iS++)
+	  if(lookaheads[iItem].symbolIs.get(iS))
+	    diagnostic("   ",symbols[iS].name,"\n");
+	diagnostic("has item ",grammarItems[iItem].describe(productions,symbols)," propagates to:\n");
 	for(const size_t& iPropagateTo : lookaheads[iItem].iPropagateToItems)
 	  diagnostic("   ",grammarItems[iPropagateTo].describe(productions,symbols),"\n");
       }
@@ -2623,6 +2627,8 @@ struct Grammar
 	      
 	      diagnostic("inserted ",n," into ",grammarItems[iPropagateToItem].describe(productions,symbols),"\n\n");
 	      }
+	
+	diagnostic("Next iteration\n");
       }
     
     diagnostic("---\n");
