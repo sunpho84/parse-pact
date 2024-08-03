@@ -1893,6 +1893,19 @@ struct GrammarTransition
     return out;
   }
   
+  /// Gets a reduction transition
+  static constexpr GrammarTransition getReduce(const size_t iSymbol,
+					       const size_t iProd)
+  {
+    GrammarTransition res;
+    
+    res.iSymbol=iSymbol;
+    res.maybeIState=std::nullopt;
+    res.iProd=iProd;
+    
+    return res;
+  }
+  
   auto operator<=>(const GrammarTransition& oth) const = default;
 };
 
