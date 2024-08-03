@@ -1871,7 +1871,7 @@ struct GrammarTransition
   size_t iSymbol;
   
   /// State that is transitioned to
-  size_t iState;
+  std::optional<size_t> maybeIState;
   
   /// Production reduced to or null for shifts
   size_t iProd;
@@ -1885,7 +1885,10 @@ struct GrammarTransition
     
     out+="   \"";
     out+=symbols[iSymbol].name;
-    out+="\" transits to state: \n"+states[iState].describe(items,productions,symbols,"       ");
+    if(maybeIState)
+      out+="\" transits to state: \n"+states[*maybeIState].describe(items,productions,symbols,"       ");
+    else
+      out+="induces a reduce transition\n";
     
     return out;
   }
