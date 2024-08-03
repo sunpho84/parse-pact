@@ -2522,9 +2522,9 @@ struct Grammar
     std::vector<GrammarItem> grammarItems{{symbols[iStartSymbol].iProductions.front(),0}};
     
     const size_t iStartState=0;
-    diagnostic("Start state first production: ",productions[symbols[iStartSymbol].iProductions.front()].describe(symbols),"\n");
-    
     grammarStates[iStartState].addClosure(grammarItems,productions,symbols);
+    
+    diagnostic("Start state first production: ",productions[symbols[iStartSymbol].iProductions.front()].describe(symbols),"\n");
     
     for(std::vector<size_t> iStates{0},iNextStates;iStates.size();iStates=iNextStates)
       {
@@ -2646,7 +2646,7 @@ struct Grammar
 	      // const GrammarSymbol& symbol=symbols[transition.iSymbol];
 	      const GrammarProduction& production=productions[item.iProduction];
 	      if(production.iRhsList.size() and production.iRhsList[item.position]==transition.iSymbol)
-		maybeAddToUniqueVector(lookaheads[iItem].iPropagateToItems,*grammarStates[transition.iState].findItem(grammarItems,{item.iProduction,item.position+1}));
+		maybeAddToUniqueVector(lookaheads[iItem].iPropagateToItems,*grammarStates[*transition.maybeIState].findItem(grammarItems,{item.iProduction,item.position+1}));
 	    }
 	
 	for(const size_t& iItem : grammarStates[iState].iItems)
@@ -2724,5 +2724,60 @@ struct Grammar
 	diagnostic("---\n");
       }
     
+    // Generate reduce transitions
+    diagnostic("-----------------------------------\n");
+    for(size_t iState=0;iState<grammarStates.size();iState++)
+      {
+	bool stateDescribed=0;
+	GrammarState& state=grammarStates[iState];
+	
+	for(size_t iIItem=0;iIItem<grammarStates[iState].iItems.size();iIItem++)
+	  {
+	    bool itemDescribed=0;
+	    const size_t iItem=grammarStates[iState].iItems[iIItem];
+	    const GrammarItem& item=grammarItems[iItem];
+	    const size_t& iProduction=item.iProduction;
+	    const GrammarProduction& production=productions[iProduction];
+	    
+	    if(item.position>=production.iRhsList.size())
+	      {
+		for(size_t iSymbol=0;iSymbol<symbols.size();iSymbol++)
+		  {
+		    if(lookaheads[iItem].symbolIs.get(iSymbol))
+		      {
+			if(not stateDescribed)
+			  {
+			    diagnostic("State: \n",state.describe(grammarItems,productions,symbols));
+			    stateDescribed=true;
+			  }
+			
+			if(not itemDescribed)
+			  {
+			    diagnostic("   in item ",item.describe(productions,symbols),"\n     reduces:\n");
+			    itemDescribed=true;
+			  }
+			
+			diagnostic("      at symbol ",symbols[iSymbol].name,"\n");
+			
+			/// Position of the transition in the state
+			size_t iTransition=0;
+			std::vector<GrammarTransition>& transitions=grammarTransitionsPerState[iState];
+			while(iTransition<transitions.size() and transitions[iTransition].iSymbol!=iSymbol)
+			  iTransition++;
+
+			if(iTransition==transitions.size())
+			  {
+			    transitions.push_back(GrammarTransition::getReduce(iSymbol,iProduction));
+			    diagnostic("        inserting new reduce transitions, it is state n.",iTransition,"\n");
+			  }
+			else
+			  {
+			    diagnostic("        panic!\n");
+			  }
+		      }
+		  }
+	      }
+	  }
+      }
   }
 };
