@@ -2331,11 +2331,78 @@ struct Grammar
 	    errorEmitter("Unreferenced symbol");
 	  }
     
+    // Replaces non-terminal symbols that are actually named terminals
+    diagnostic("-----------------------------------\n");
+    for(bool evicted=true;evicted;)
+      {
+	evicted=false;
+	
+	size_t iSymbol=0;
+	while(iSymbol<symbols.size() and not evicted)
+	  {
+	    if(iSymbol!=iErrorSymbol)
+	      if(GrammarSymbol& symbol=symbols[iSymbol];symbol.iProductions.size()==1)
+		{
+		  const size_t iProduction=symbol.iProductions.front();
+		  
+		  if(const GrammarProduction& production=productions[iProduction];production.iRhsList.size()==1 and production.action.empty())
+		    {
+		      if(const size_t& iFirstSymbol=production.iRhsList.front();symbols[iFirstSymbol].type==GrammarSymbol::Type::TERMINAL_SYMBOL)
+			{
+			  evicted=true;
+			  
+			  if(size_t& precedence=symbols[iFirstSymbol].precedence;precedence==0)
+			    precedence=symbol.precedence;
+			  
+			  if(GrammarSymbol::Associativity& associativity=symbols[iFirstSymbol].associativity;associativity==GrammarSymbol::Associativity::NONE)
+			    associativity=symbol.associativity;
+			  
+			  diagnostic("Symbol \"",symbol.name,"\" is an alias for the terminal: \"",symbols[iFirstSymbol].name,"\"\n");
+			  
+			  for(GrammarSymbol& s : symbols)
+			    {
+			      for(size_t& jProduction : s.iProductions)
+				if(jProduction>iProduction)
+				  jProduction--;
+			      
+			      if(s.precedence>iSymbol)
+				s.precedence--;
+			    }
+			  diagnostic("Evicting production: ",production.describe(symbols),"\n");
+			  productions.erase(productions.begin()+iProduction);
+			  
+			  for(GrammarProduction& p : productions)
+			    {
+			      if(p.lhs>iSymbol)
+				p.lhs--;
+			      
+			      for(size_t& iRhs : p.iRhsList)
+				if(iRhs>iSymbol)
+				  iRhs--;
+			      
+			      if(p.precedenceSymbol and *p.precedenceSymbol>iSymbol)
+				p.precedenceSymbol=*p.precedenceSymbol-1;
+			    }
+			  
+			  symbols.erase(symbols.begin()+iSymbol);
+			}
+		    }
+		}
+	    
+	    if(not evicted)
+	      iSymbol++;
+	  }
+      }
+    
+    // Print all symbols
     diagnostic("-----------------------------------\n");
     
     for(const GrammarSymbol& s : symbols)
       diagnostic("symbol ",s.name,"\n");
     diagnostic("\n");
+    
+    // Calculate firsts
+    diagnostic("-----------------------------------\n");
     
     for(size_t nAdded=1;nAdded;)
       {
