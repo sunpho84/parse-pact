@@ -1690,7 +1690,7 @@ struct GrammarSymbol
 struct GrammarProduction
 {
   /// Symbol on the lhs of the production
-  size_t lhs;
+  size_t iLhs;
   
   /// Symbols on the rhs of the production
   std::vector<size_t> iRhsList;
@@ -1707,8 +1707,8 @@ struct GrammarProduction
     /// Returned string
     std::string out;
     
-    out+=symbols[lhs].name;
-    out+=" =";
+    out+=symbols[iLhs].name;
+    out+=" :";
     
     for(const auto& iRhs : iRhsList)
       {
@@ -1752,8 +1752,8 @@ struct GrammarItem
     /// Returned string
     std::string out;
     
-    out+=symbols[production.lhs].name;
-    out+=" =";
+    out+=symbols[production.iLhs].name;
+    out+=" :";
     
     for(size_t iIRhs=0,max=production.iRhsList.size();iIRhs<=max;iIRhs++)
       {
@@ -2159,7 +2159,7 @@ struct Grammar
       for(const size_t& iP : s.iProductions)
 	{
 	  const GrammarProduction& p=productions[iP];
-	  diagnostic("  Processing production ",iP,", lhs: ",symbols[p.lhs].name," before added: ",added,", rhs size: ",p.iRhsList.size(),"\n");
+	  diagnostic("  Processing production ",iP,", lhs: ",symbols[p.iLhs].name," before added: ",added,", rhs size: ",p.iRhsList.size(),"\n");
 	  
 	  bool nonNullableFound=false;
 	  for(size_t iRhs=0;iRhs<p.iRhsList.size() and not nonNullableFound;iRhs++)
