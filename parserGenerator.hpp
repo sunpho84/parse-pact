@@ -1879,11 +1879,14 @@ struct GrammarTransition
   /// Symbol that the transition is taken on.
   size_t iSymbol;
   
-  /// State that is transitioned to
-  std::optional<size_t> maybeIState;
+  /// State or production that the transition is taken or reduced to
+  size_t iStateOrProduction;
   
-  /// Production reduced to or null for shifts
-  size_t iProd;
+  /// State whether a transition is a shift or reduction
+  enum Type{SHIFT,REDUCE};
+  
+  /// Type of the current transition
+  Type type;
   
   constexpr inline std::string describe(const std::vector<GrammarItem>& items,
 					const std::vector<GrammarProduction>& productions,
