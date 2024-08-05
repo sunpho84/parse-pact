@@ -1701,7 +1701,16 @@ struct GrammarProduction
   /// Name of the action to be accomplished when matching
   std::string_view action;
   
-  /// Returns the prouction listed in a string
+  /// Returns the precedence, or 0
+  constexpr size_t precedence(const std::vector<GrammarSymbol>& symbols) const
+  {
+    if(precedenceSymbol)
+      return symbols[precedenceSymbol.value()].precedence;
+    else
+      return 0;
+  }
+  
+  /// Returns the production in a string
   constexpr inline std::string describe(const std::vector<GrammarSymbol>& symbols) const
   {
     /// Returned string
