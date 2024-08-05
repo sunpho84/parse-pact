@@ -1825,11 +1825,17 @@ struct GrammarState
 	      };
 	    
 	    if(iSymbol==iNextSymbol)
-	      add(item.iProduction,item.position+1);
+	      {
+		// diagnostic(" Reached symbol ",symbols[iSymbol].name,"\n");
+		add(item.iProduction,item.position+1);
+	      }
 	    
 	    for(const size_t& iProduction : symbols[iNextSymbol].iProductionsReachableByFirstSymbol)
 	      if(const GrammarProduction& production=productions[iProduction];production.iRhsList[0]==iSymbol)
-		add(iProduction,1);
+		{
+		  // diagnostic(" Reached production ",production.describe(symbols)," whose first rhs is the symbol ",symbols[iSymbol].name,"\n");
+		  add(iProduction,1);
+		}
 	  }
       }
     
@@ -1897,10 +1903,10 @@ struct GrammarTransition
     
     out+="   \"";
     out+=symbols[iSymbol].name;
-    if(maybeIState)
-      out+="\" transits to state: \n"+states[*maybeIState].describe(items,productions,symbols,"       ");
+    if(type==SHIFT)
+      out+="\" transits to state: \n"+states[iStateOrProduction].describe(items,productions,symbols,"       ");
     else
-      out+="induces a reduce transition\n";
+      out+="induces a reduce transition using production: "+productions[iStateOrProduction].describe(symbols)+"\n";
     
     return out;
   }
@@ -1909,13 +1915,7 @@ struct GrammarTransition
   static constexpr GrammarTransition getReduce(const size_t iSymbol,
 					       const size_t iProd)
   {
-    GrammarTransition res;
-    
-    res.iSymbol=iSymbol;
-    res.maybeIState=std::nullopt;
-    res.iProd=iProd;
-    
-    return res;
+    return {.iSymbol=iSymbol,.iStateOrProduction=iProd,.type=REDUCE};
   }
   
   auto operator<=>(const GrammarTransition& oth) const = default;
@@ -2345,6 +2345,11 @@ struct Grammar
     
     // Replaces non-terminal symbols that are actually named terminals
     diagnostic("-----------------------------------\n");
+    // diagnostic("list of productions:\n");
+    // for(const GrammarProduction& production : productions)
+    //   diagnostic(production.describe(symbols),"\n");
+    // diagnostic("-----------------------------------\n");
+    
     for(bool evicted=true;evicted;)
       {
 	evicted=false;
@@ -2355,13 +2360,15 @@ struct Grammar
 	    if(iSymbol!=iErrorSymbol)
 	      if(GrammarSymbol& symbol=symbols[iSymbol];symbol.iProductions.size()==1)
 		{
-		  const size_t iProduction=symbol.iProductions.front();
+		  const size_t /* don't take by reference! */iProduction=symbol.iProductions.front();
 		  
 		  if(const GrammarProduction& production=productions[iProduction];production.iRhsList.size()==1 and production.action.empty())
 		    {
-		      if(const size_t& iFirstSymbol=production.iRhsList.front();symbols[iFirstSymbol].type==GrammarSymbol::Type::TERMINAL_SYMBOL)
+		      if(const size_t /* don't take by reference! */ iFirstSymbol=production.iRhsList.front();symbols[iFirstSymbol].type==GrammarSymbol::Type::TERMINAL_SYMBOL)
 			{
 			  evicted=true;
+			  
+			  diagnostic("Symbol \"",symbol.name,"\" is an alias for the terminal: \"",symbols[iFirstSymbol].name,"\"\n");
 			  
 			  if(size_t& precedence=symbols[iFirstSymbol].precedence;precedence==0)
 			    precedence=symbol.precedence;
@@ -2369,8 +2376,9 @@ struct Grammar
 			  if(GrammarSymbol::Associativity& associativity=symbols[iFirstSymbol].associativity;associativity==GrammarSymbol::Associativity::NONE)
 			    associativity=symbol.associativity;
 			  
-			  diagnostic("Symbol \"",symbol.name,"\" is an alias for the terminal: \"",symbols[iFirstSymbol].name,"\"\n");
+			  diagnostic("Evicting production: ",production.describe(symbols),"\n");
 			  
+			  productions.erase(productions.begin()+iProduction);
 			  for(GrammarSymbol& s : symbols)
 			    {
 			      for(size_t& jProduction : s.iProductions)
@@ -2380,20 +2388,32 @@ struct Grammar
 			      if(s.precedence>iSymbol)
 				s.precedence--;
 			    }
-			  diagnostic("Evicting production: ",production.describe(symbols),"\n");
-			  productions.erase(productions.begin()+iProduction);
 			  
 			  for(GrammarProduction& p : productions)
 			    {
-			      if(p.lhs>iSymbol)
-				p.lhs--;
+			      const auto fixSymbol=
+				[&iSymbol,
+				 &iFirstSymbol](size_t& i)
+				{
+				  // const size_t old=i;
+				  
+				  if(i==iSymbol)
+				    i=iFirstSymbol;
+				  
+				  if(i>iSymbol)
+				    i--;
+				  
+				  // if(old!=i)
+				  //   diagnostic("before was ",old,"now is ",i,"\n");
+				};
+			      
+			      fixSymbol(p.iLhs);
 			      
 			      for(size_t& iRhs : p.iRhsList)
-				if(iRhs>iSymbol)
-				  iRhs--;
+				fixSymbol(iRhs);
 			      
-			      if(p.precedenceSymbol and *p.precedenceSymbol>iSymbol)
-				p.precedenceSymbol=*p.precedenceSymbol-1;
+			      if(p.precedenceSymbol)
+				fixSymbol(*p.precedenceSymbol);
 			    }
 			  
 			  symbols.erase(symbols.begin()+iSymbol);
@@ -2405,6 +2425,10 @@ struct Grammar
 	      iSymbol++;
 	  }
       }
+    
+    // diagnostic("list of productions after evicting:\n");
+    // for(const GrammarProduction& production : productions)
+    //   diagnostic(production.describe(symbols),"\n");
     
     // Print all symbols
     diagnostic("-----------------------------------\n");
@@ -2482,7 +2506,8 @@ struct Grammar
     for(const GrammarProduction& p : productions)
       diagnostic(p.describe(symbols),"\n");
     diagnostic("Productions end--------\n");
-    diagnostic("HERE\n");
+    
+    
     //int i=0;
     for(GrammarSymbol& s : symbols)
       {
@@ -2556,14 +2581,11 @@ struct Grammar
 		      grammarTransitionsPerState.emplace_back();
 		    }
 		  
-		  // diagnostic("Emplacing in state:\n");
-		  // for(const GrammarItem& it : grammarStates[iState])
-		  //   diagnostic(" | ",it.describe(productions,symbols)," \n");
-		  // diagnostic(" the transition mediated by symbol \"",symbols[iSymbol].name,"\" to state \n");
-		  // for(const GrammarItem& it : grammarStates[iGotoState])
-		  //   diagnostic("     | ",it.describe(productions,symbols)," \n");
-		  
 		  grammarTransitionsPerState[iState].emplace_back(iSymbol,iGotoState);
+		  diagnostic("Emplaced in state:\n",
+			     grammarStates[iState].describe(grammarItems,productions,symbols));
+		  diagnostic(" the transition mediated by symbol \"",symbols[iSymbol].name,"\" to state\n",grammarStates[iGotoState].describe(grammarItems,productions,symbols),"\n");
+		  
 		}
       }
     
@@ -2658,7 +2680,7 @@ struct Grammar
 	      // const GrammarSymbol& symbol=symbols[transition.iSymbol];
 	      const GrammarProduction& production=productions[item.iProduction];
 	      if(production.iRhsList.size() and production.iRhsList[item.position]==transition.iSymbol)
-		maybeAddToUniqueVector(lookaheads[iItem].iPropagateToItems,*grammarStates[*transition.maybeIState].findItem(grammarItems,{item.iProduction,item.position+1}));
+		maybeAddToUniqueVector(lookaheads[iItem].iPropagateToItems,*grammarStates[transition.iStateOrProduction].findItem(grammarItems,{item.iProduction,item.position+1}));
 	    }
 	
 	for(const size_t& iItem : grammarStates[iState].iItems)
@@ -2755,6 +2777,8 @@ struct Grammar
 	      {
 		for(size_t iSymbol=0;iSymbol<symbols.size();iSymbol++)
 		  {
+		    const GrammarSymbol& symbol=symbols[iSymbol];
+		    
 		    if(lookaheads[iItem].symbolIs.get(iSymbol))
 		      {
 			if(not stateDescribed)
@@ -2776,7 +2800,7 @@ struct Grammar
 			std::vector<GrammarTransition>& transitions=grammarTransitionsPerState[iState];
 			while(iTransition<transitions.size() and transitions[iTransition].iSymbol!=iSymbol)
 			  iTransition++;
-
+			
 			if(iTransition==transitions.size())
 			  {
 			    transitions.push_back(GrammarTransition::getReduce(iSymbol,iProduction));
@@ -2784,7 +2808,23 @@ struct Grammar
 			  }
 			else
 			  {
-			    diagnostic("        panic!\n");
+			    diagnostic("!!!!panic! state\n",state.describe(grammarItems,productions,symbols)," has already transition:\n",transitions[iTransition].describe(grammarItems,productions,symbols,grammarStates)," for symbol \'",symbol.name,"\'\n");
+			    
+			    const size_t productionPrecedence=production.precedence(symbols);
+			    
+			    if(GrammarTransition& transition=transitions[iTransition];transition.type==GrammarTransition::Type::SHIFT)
+			      {
+				if(productionPrecedence==0 or symbol.precedence==0 or (symbol.precedence==productionPrecedence and symbol.associativity==GrammarSymbol::Associativity::NONE))
+				  errorEmitter((std::string("shift/reduce conflict for '")+std::string(symbols[production.iLhs].name)+"' on '"+std::string(symbol.name)+"' ought to transition '"+transition.describe(grammarItems,productions,symbols,grammarStates)+"'").c_str());
+				else
+				  if(productionPrecedence>symbol.precedence or (symbol.precedence==productionPrecedence and symbol.associativity==GrammarSymbol::Associativity::RIGHT))
+				    {
+				      diagnostic("overriding shift ",transition.describe(grammarItems,productions,symbols,grammarStates));
+				      transition.type=GrammarTransition::REDUCE;
+				      transition.iStateOrProduction=iProduction;
+				      diagnostic(" into reduce: ",transition.describe(grammarItems,productions,symbols,grammarStates));
+				    }
+			      }
 			  }
 		      }
 		  }
