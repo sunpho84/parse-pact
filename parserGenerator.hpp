@@ -133,7 +133,7 @@ constexpr std::pair<bool,size_t> maybeAddToUniqueVector(std::vector<T>& v,
 struct BitSet
 {
   /// Number of bits
-  const size_t n;
+  size_t n;
   
   /// Stored data
   std::vector<char> data;
@@ -1979,6 +1979,10 @@ struct Grammar
   
   std::vector<GrammarState> states;
   
+  std::vector<std::vector<GrammarTransition>> grammarTransitionsPerState;
+  
+  std::vector<Lookahead> lookaheads;
+  
   /// Describes a production
   constexpr inline std::string describe(const GrammarProduction& production) const
   {
@@ -2650,24 +2654,14 @@ struct Grammar
 	diagnostic("Symbol \"",s.name,"\" can be reached through production \"",describe(productions[iP]),"\" whose first symbol is \"",symbols[productions[iP].iRhsList.front()].name,"\"\n");
   }
   
-  constexpr Grammar(const std::string_view& str) :
-    currentPrecedence(0)
+  /// Generates the states
+  constexpr void generateStates()
   {
-    addGenericSymbols();
-    parseTheGrammar(str);
-    checkTheGrammar();
-    grammarOptimize();
-    calculateFirsts();
-    calculateFollows();
-    setPrecedence();
-    preComputeGotoStates();
-    
-    // Generates the states
     diagnostic("-----------------------------------\n");
     
     states.emplace_back(std::vector<size_t>{0});
-    std::vector<std::vector<GrammarTransition>> grammarTransitionsPerState(1);
-
+    grammarTransitionsPerState.resize(1);
+    
     items.emplace_back(symbols[iStartSymbol].iProductions.front(),0);
     
     const size_t iStartState=0;
@@ -2714,12 +2708,15 @@ struct Grammar
     
     for(auto& s : states)
       s.addClosure(items,productions,symbols);
-    
-    // Generates the spontaneous lookeaheads
+  }
+  
+  /// Generates the spontaneous lookeaheads
+  constexpr void generateSpontaneousLookahead()
+  {
     diagnostic("-----------------------------------\n");
     
-    std::vector<Lookahead> lookaheads(items.size(),symbols.size());
-    diagnostic("Building the lookhaeds for ",symbols.size()," symbols, read from lookaheads: ",lookaheads.front().symbolIs.n," nchars: ",lookaheads.front().symbolIs.data.size(),"\n");
+    lookaheads.resize(items.size(),symbols.size());
+    diagnostic("Building the lookaheds for ",symbols.size()," symbols, read from lookaheads: ",lookaheads.front().symbolIs.n," nchars: ",lookaheads.front().symbolIs.data.size(),"\n");
     lookaheads[0].symbolIs.set(iEndSymbol,1);
     
     for(const GrammarState& state : states)
@@ -2779,9 +2776,13 @@ struct Grammar
 	    diagnostic("   ",symbols[iSymbol].name,"\n");
 	diagnostic("---\n");
       }
-    
-    // Generate goto items
+  }
+  
+  /// Generate goto items
+  constexpr void generateGotoItems()
+  {
     diagnostic("-----------------------------------\n");
+    
     for(size_t iState=0;iState<states.size();iState++)
       {
 	for(const GrammarTransition& transition : grammarTransitionsPerState[iState])
@@ -2820,7 +2821,10 @@ struct Grammar
 	for(const size_t& iPropagateTo : lookaheads[iItem].iPropagateToItems)
 	  diagnostic("   ",describe(items[iPropagateTo]),"\n");
       }
-    
+  }
+  
+  constexpr void propagateLookaheads()
+  {
     // Propagates lookahead
     diagnostic("-----------------------------------\n");
     std::vector<size_t> iLookaheadsToInsert(lookaheads.size());
@@ -2833,8 +2837,7 @@ struct Grammar
 	  for(const Lookahead& lookahead=lookaheads[iLookahead];const size_t& iPropagateToItem : lookahead.iPropagateToItems)
 	    {
 	      const auto print=
-		[this,
-		 &lookaheads](const size_t &iItem)
+		[this](const size_t &iItem)
 		{
 		  std::string res;
 		  res+="item \""+describe(items[iItem])+"\" containing the following symbols:\n";
@@ -2866,9 +2869,13 @@ struct Grammar
 	    diagnostic("   ",symbols[iSymbol].name,"\n");
 	diagnostic("---\n");
       }
-    
-    // Generate reduce transitions
+  }
+  
+  /// Generate reduce or shift transitions
+  constexpr void generateTransitions()
+  {
     diagnostic("-----------------------------------\n");
+    
     for(size_t iState=0;iState<states.size();iState++)
       {
 	bool stateDescribed=0;
@@ -2950,5 +2957,23 @@ struct Grammar
 	      }
 	  }
       }
+  }
+  
+  constexpr Grammar(const std::string_view& str) :
+    currentPrecedence(0)
+  {
+    addGenericSymbols();
+    parseTheGrammar(str);
+    checkTheGrammar();
+    grammarOptimize();
+    calculateFirsts();
+    calculateFollows();
+    setPrecedence();
+    preComputeGotoStates();
+    generateStates();
+    generateSpontaneousLookahead();
+    generateGotoItems();
+    propagateLookaheads();
+    generateTransitions();
   }
 };
