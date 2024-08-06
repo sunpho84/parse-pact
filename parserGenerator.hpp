@@ -2200,103 +2200,135 @@ struct Grammar
   }
   
   /// Computes the first elements
-  constexpr size_t calculateFirsts(const size_t& iS)
+  constexpr void calculateFirsts()
   {
-    size_t added=0;
+    // Calculate firsts
+    diagnostic("-----------------------------------\n");
     
-    /// \todo: loop only on non terminal, do the terminal part apart
-    
-    GrammarSymbol& s=symbols[iS];
-    diagnostic("Processing symbol ",s.name,"\n");
-    if(s.type==GrammarSymbol::Type::NON_TERMINAL_SYMBOL)
-      for(const size_t& iP : s.iProductions)
-	{
-	  const GrammarProduction& p=productions[iP];
-	  diagnostic("  Processing production ",iP,", lhs: ",symbols[p.iLhs].name," before added: ",added,", rhs size: ",p.iRhsList.size(),"\n");
-	  
-	  bool nonNullableFound=false;
-	  for(size_t iRhs=0;iRhs<p.iRhsList.size() and not nonNullableFound;iRhs++)
-	    {
-	      const size_t iT=p.iRhsList[iRhs];
-	      nonNullableFound|=not symbols[iT].nullable;
-	      diagnostic("  Not at symbols end, adding ",symbols[iT].name,"\n");
-	      
-	      diagnostic("  Symbol ",symbols[iT].name," firsts:\n");
-	      for(const auto& iF : symbols[iT].firsts)
+    for(size_t nAdded=1;nAdded;)
+      {
+	nAdded=0;
+	for(size_t iS=0;iS<symbols.size();iS++)
+	  {
+	    /// \todo: loop only on non terminal, do the terminal part apart
+	    
+	    GrammarSymbol& s=symbols[iS];
+	    diagnostic("Processing symbol ",s.name,"\n");
+	    
+	    if(s.type==GrammarSymbol::Type::NON_TERMINAL_SYMBOL)
+	      for(const size_t& iP : s.iProductions)
 		{
-		  diagnostic("   ",symbols[iF].name,"\n");
-		  const bool isAdded=maybeAddToUniqueVector(s.firsts,iF).first;
-		  added+=isAdded;
-		  if(isAdded)
-		    diagnostic("   added ",symbols[iF].name,"\n");
+		  const GrammarProduction& p=productions[iP];
+		  diagnostic("  Processing production ",iP,", lhs: ",symbols[p.iLhs].name," before added: ",nAdded,", rhs size: ",p.iRhsList.size(),"\n");
+		  
+		  bool nonNullableFound=false;
+		  for(size_t iRhs=0;iRhs<p.iRhsList.size() and not nonNullableFound;iRhs++)
+		    {
+		      const size_t iT=p.iRhsList[iRhs];
+		      nonNullableFound|=not symbols[iT].nullable;
+		      diagnostic("  Not at symbols end, adding ",symbols[iT].name,"\n");
+		      
+		      diagnostic("  Symbol ",symbols[iT].name," firsts:\n");
+		      for(const auto& iF : symbols[iT].firsts)
+			{
+			  diagnostic("   ",symbols[iF].name,"\n");
+			  
+			  const bool isAdded=maybeAddToUniqueVector(s.firsts,iF).first;
+			  nAdded+=isAdded;
+			  
+			  if(isAdded)
+			    diagnostic("   added ",symbols[iF].name,"\n");
+			}
+		    }
+		  
+		  if(not nonNullableFound)
+		    {
+		      if(not s.nullable)
+			{
+			  diagnostic("nullable changed\n");
+			  nAdded++;
+			}
+		      s.nullable=true;
+		    }
 		}
-	    }
-	  
-	  if(not nonNullableFound)
-	    {
-	      if(not s.nullable)
-		{
-		  diagnostic("nullable changed\n");
-		  added++;
-		}
-	      s.nullable=true;
-	    }
-	}
-    else
-      added+=maybeAddToUniqueVector(s.firsts,iS).first;
+	    else
+	      nAdded+=maybeAddToUniqueVector(s.firsts,iS).first;
+	    
+	    diagnostic("  nadded: ",nAdded,"\n");
+	  }
+	diagnostic("Finished looping on all symbols to find firsts, nAdded: ",nAdded,"\n");
+      }
     
-    diagnostic("  nadded: ",added,"\n");
-    
-    return added;
+    // for(const GrammarSymbol& s : symbols)
+    //   {
+    // 	diagnostic("symbol ",s.name," firsts:\n");
+    // 	for(const auto& iF : s.firsts)
+    // 	  diagnostic("   ",symbols[iF].name,"\n");
+    //   }
   }
   
   /// Computes the follow elements
-  constexpr size_t calculateFollows(const size_t& iS)
+  constexpr void calculateFollows()
   {
-    size_t added=0;
+    diagnostic("-----------------------------------\n");
     
-    GrammarSymbol& s=symbols[iS];
-    // diagnostic("Processing symbol ",s.name,"\n");
-    
-    for(const size_t& iP : s.iProductions)
+    symbols[iStartSymbol].follows.emplace_back(iEndSymbol);
+    for(size_t nAdded=1;nAdded;)
       {
-	const GrammarProduction& p=productions[iP];
-	// diagnostic("  Processing production ",iP,", lhs: ",symbols[p.lhs].name," before added: ",added,", rhs size: ",p.rhs.size(),"\n");
-	// for(const size_t& iS : p.rhs)
-	//   diagnostic("  ",symbols[iS].name," ",iS,"\n");
-	
-	bool nonNullableFound=false;
-	size_t iLastBeforeOut=p.iRhsList.size()-1;
-	for(size_t iRhs=p.iRhsList.size()-1;iRhs<p.iRhsList.size() and not nonNullableFound;iRhs--)
+	nAdded=0;
+	for(size_t iS=0;iS<symbols.size();iS++)
 	  {
-	    GrammarSymbol& curSymbol=symbols[p.iRhsList[iRhs]];
-	    for(const auto& iF : s.follows)
+	    GrammarSymbol& s=symbols[iS];
+	    // diagnostic("Processing symbol ",s.name,"\n");
+	    
+	    for(const size_t& iP : s.iProductions)
 	      {
-		const bool isAdded=maybeAddToUniqueVector(curSymbol.follows,iF).first;
-		added+=isAdded;
-		// if(isAdded)
-		//   diagnostic("   Added ",symbols[iF].name," from follows to follows of ",curSymbol.name,"\n");
+		const GrammarProduction& p=productions[iP];
+		// diagnostic("  Processing production ",iP,", lhs: ",symbols[p.lhs].name," before added: ",added,", rhs size: ",p.rhs.size(),"\n");
+		// for(const size_t& iS : p.rhs)
+		//   diagnostic("  ",symbols[iS].name," ",iS,"\n");
+		
+		bool nonNullableFound=false;
+		size_t iLastBeforeOut=p.iRhsList.size()-1;
+		for(size_t iRhs=p.iRhsList.size()-1;iRhs<p.iRhsList.size() and not nonNullableFound;iRhs--)
+		  {
+		    GrammarSymbol& curSymbol=symbols[p.iRhsList[iRhs]];
+		    for(const auto& iF : s.follows)
+		      {
+			const bool isAdded=maybeAddToUniqueVector(curSymbol.follows,iF).first;
+			nAdded+=isAdded;
+			// if(isAdded)
+			//   diagnostic("   Added ",symbols[iF].name," from follows to follows of ",curSymbol.name,"\n");
+		      }
+		    
+		    nonNullableFound|=not curSymbol.nullable;
+		    
+		    iLastBeforeOut=iRhs;
+		  }
+		
+		for(size_t iRhs=0;iRhs+1<p.iRhsList.size();iRhs++)
+		  {
+		    // diagnostic("checking previous iRhs ",iRhs," , ",symbols[p.rhs[iRhs]].name," and symbol iLastBeforeOut ",iLastBeforeOut," , ",symbols[p.rhs[iLastBeforeOut]].name,"\n");
+		    for(const auto& iF : symbols[p.iRhsList[iLastBeforeOut]].firsts)
+		      {
+			const bool isAdded=maybeAddToUniqueVector(symbols[p.iRhsList[iRhs]].follows,iF).first;
+			nAdded+=isAdded;
+			// if(isAdded)
+			//   diagnostic("   Added ",symbols[iF].name," from firsts (",std::to_string(1+nonNullableFound),") of ",symbols[p.rhs[iLastBeforeOut]].name," to follows of ",symbols[p.rhs[iRhs]].name,"\n");
+		      }
+		  }
 	      }
-	    
-	    nonNullableFound|=not curSymbol.nullable;
-	    
-	    iLastBeforeOut=iRhs;
 	  }
 	
-	for(size_t iRhs=0;iRhs+1<p.iRhsList.size();iRhs++)
-	  {
-	    // diagnostic("checking previous iRhs ",iRhs," , ",symbols[p.rhs[iRhs]].name," and symbol iLastBeforeOut ",iLastBeforeOut," , ",symbols[p.rhs[iLastBeforeOut]].name,"\n");
-	    for(const auto& iF : symbols[p.iRhsList[iLastBeforeOut]].firsts)
-	      {
-		const bool isAdded=maybeAddToUniqueVector(symbols[p.iRhsList[iRhs]].follows,iF).first;
-		added+=isAdded;
-		// if(isAdded)
-		//   diagnostic("   Added ",symbols[iF].name," from firsts (",std::to_string(1+nonNullableFound),") of ",symbols[p.rhs[iLastBeforeOut]].name," to follows of ",symbols[p.rhs[iRhs]].name,"\n");
-	      }
-	  }
+	diagnostic("Finished looping on all symbols to find follows, added something: ",nAdded,"\n");
       }
     
-    return added;
+    // for(const GrammarSymbol& s : symbols)
+    //   {
+    // 	diagnostic("symbol ",s.name," follows:\n");
+    // 	for(const auto& iF : s.follows)
+    // 	  diagnostic("   ",symbols[iF].name,"\n");
+    //   }
   }
   
   /// Adds generic symbols to the symbols list
@@ -2545,42 +2577,8 @@ struct Grammar
     parseTheGrammar(str);
     checkTheGrammar();
     grammarOptimize();
-    
-    // Calculate firsts
-    diagnostic("-----------------------------------\n");
-    
-    for(size_t nAdded=1;nAdded;)
-      {
-	nAdded=0;
-	for(size_t iS=0;iS<symbols.size();iS++)
-	  nAdded+=calculateFirsts(iS);
-	diagnostic("Finished looping on all symbols to find firsts, added something: ",nAdded,"\n");
-      }
-    
-    for(const GrammarSymbol& s : symbols)
-      {
-	diagnostic("symbol ",s.name," firsts:\n");
-	for(const auto& iF : s.firsts)
-	  diagnostic("   ",symbols[iF].name,"\n");
-      }
-    
-    diagnostic("-----------------------------------\n");
-    
-    symbols[iStartSymbol].follows.emplace_back(iEndSymbol);
-    for(size_t nAdded=1;nAdded;)
-      {
-	nAdded=0;
-	for(size_t iS=0;iS<symbols.size();iS++)
-	  nAdded+=calculateFollows(iS);
-	diagnostic("Finished looping on all symbols to find follows, added something: ",nAdded,"\n");
-      }
-    
-    for(const GrammarSymbol& s : symbols)
-      {
-	diagnostic("symbol ",s.name," follows:\n");
-	for(const auto& iF : s.follows)
-	  diagnostic("   ",symbols[iF].name,"\n");
-      }
+    calculateFirsts();
+    calculateFollows();
     
     // for(size_t iSymbol=0;iSymbol<symbols.size();iSymbol++)
     //   if(const auto& s=symbols[iSymbol];s.type==GrammarSymbol::Type::NULL_SYMBOL)
