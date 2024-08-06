@@ -2199,6 +2199,246 @@ struct Grammar
     return matchRes;
   }
   
+  /// Adds generic symbols to the symbols list
+  constexpr void addGenericSymbols()
+  {
+    using enum GrammarSymbol::Type;
+    
+    for(const auto& [name,type,i] :
+	  {std::make_tuple(".start",NON_TERMINAL_SYMBOL,&iStartSymbol),
+	   {".end",END_SYMBOL,&iEndSymbol},
+	   {".error",NULL_SYMBOL,&iErrorSymbol},
+	   {".whitespace",NULL_SYMBOL,&iWhitespaceSymbol}})
+      {
+	*i=symbols.size();
+	symbols.emplace_back(name,type);
+      }
+  }
+  
+  /// Matches the passed string into symbols, actions, productions, etc
+  constexpr void parseTheGrammar(const std::string_view& str)
+  {
+    /// Embeds the string into a matcher
+    Matching match(str);
+    
+    match.matchWhiteSpaceOrComments();
+    
+    if(auto id=match.matchId();not id.empty())
+      {
+	name=id;
+	
+	diagnostic("Matched grammar: \"",id,"\", skipped to ",match.ref.begin(),"\n");
+	
+	match.matchWhiteSpaceOrComments();
+	
+	if(match.matchChar('{'))
+	  {
+	    diagnostic("Matched {\n");
+	    
+	    while(matchAndParseAssociativityStatement(match) or
+		  matchAndParseWhitespaceStatement(match) or
+		  matchAndParseProductionStatement(match))
+	      diagnostic("parsed some statement\n");
+	    
+	    match.matchWhiteSpaceOrComments();
+	    if(not match.matchChar('}'))
+	      diagnostic("Unfinished grammar, reference is: \"",match.ref,"\"\n");
+	    
+	    match.matchWhiteSpaceOrComments();
+	    if(not match.ref.empty())
+	      errorEmitter("Unfinished parsing!\n");
+	    else
+	      diagnostic("Grammar parsing correctly ended\n");
+	  }
+	else
+	  errorEmitter("Empty grammar\n");
+      }
+    else
+      errorEmitter("Unmatched id to name the grammar\n");
+  }
+  
+  /// Performs some test of the grammar
+  constexpr void checkTheGrammar()
+  {
+    // Check that all symbols are referenced at least once and defined
+    for(const GrammarSymbol& s : symbols)
+      if(s.type==GrammarSymbol::Type::NON_TERMINAL_SYMBOL and s.iProductions.empty() and not s.referredAsPrecedenceSymbol)
+	errorEmitter("Undefined symbol");
+    
+    /// Count of symbols usage as rhs or precedence
+    std::vector<size_t> symbolsCount(symbols.size(),0);
+    for(const GrammarProduction& production : productions)
+      {
+	for(const size_t& r : production.iRhsList)
+	  symbolsCount[r]++;
+	
+	if(auto p=production.precedenceSymbol)
+	  symbolsCount[*p]++;
+      }
+    
+    // Check that the symbols are used
+    for(size_t iSymbol=0;iSymbol<symbols.size();iSymbol++)
+      if(const std::array<size_t,4> filt{iStartSymbol,iEndSymbol,iErrorSymbol,iWhitespaceSymbol};
+	 std::find(filt.begin(),filt.end(),iSymbol)==filt.end())
+	if(symbolsCount[iSymbol]==0)
+	  {
+	    diagnostic("Symbol ",symbols[iSymbol].name," ",iSymbol," ",iStartSymbol,"\n");
+	    errorEmitter("Unreferenced symbol");
+	  }
+  }
+  
+  /// Remove the references to a symbol
+  constexpr void replaceSymbolReference(size_t& iTargetSymbol,
+					const size_t& iReplacedSymbol,
+					const size_t& iReplacementSymbol)
+  {
+    // const size_t old=target;
+    
+    if(iTargetSymbol==iReplacedSymbol)
+      iTargetSymbol=iReplacementSymbol;
+    
+    if(iTargetSymbol>iReplacedSymbol)
+      iTargetSymbol--;
+    
+    // if(old!=target)
+    //   diagnostic("before was ",old,"now is ",target,"\n");
+  }
+  
+  /// Replaces all occurrence of the first symbol with that of the second, and remove it from the list
+  constexpr void replaceAndRemoveSymbol(const size_t& iReplacedSymbol,
+					const size_t& iReplacementSymbol)
+  {
+    /// Checks that noth both symbols declared "what"
+    const auto checkNotBothDeclared=
+      [this,
+       iReplacedSymbol,
+       iReplacementSymbol](const size_t& replaced,
+			   const size_t& replacement,
+			   const char* what)
+      {
+	if(replaced!=0 and replacement!=0)
+	  errorEmitter((std::string("symbol ")+std::string(symbols[iReplacedSymbol].name)+std::string(" to be replaced by ")+std::string(symbols[iReplacementSymbol].name)+std::string(" but both have a declared ")+what).c_str());
+      };
+    
+    const size_t& replacedPrecedence=symbols[iReplacedSymbol].precedence;
+    size_t& replacementPrecedence=symbols[iReplacementSymbol].precedence;
+    
+    checkNotBothDeclared(replacedPrecedence,replacementPrecedence,"precedence");
+    
+    if(replacedPrecedence!=0 and replacementPrecedence!=0)
+      errorEmitter((std::string("symbol ")+std::string(symbols[iReplacedSymbol].name)+std::string(" to be replaced by ")+std::string(symbols[iReplacementSymbol].name)+std::string(" but both have a declared precedence")).c_str());
+    
+    if(replacedPrecedence)
+      replacementPrecedence=replacedPrecedence;
+    
+    const GrammarSymbol::Associativity& replacedAssociativity=symbols[iReplacedSymbol].associativity;
+    GrammarSymbol::Associativity& replacementAssociativity=symbols[iReplacementSymbol].associativity;
+    
+    checkNotBothDeclared((size_t)replacedAssociativity,(size_t)replacementAssociativity,"associativity");
+    
+    if(replacedAssociativity!=GrammarSymbol::Associativity::NONE)
+      replacementAssociativity=replacedAssociativity;
+    
+    /// Incapsulate the replacement of the symbol
+    const auto action=
+      [this,
+       iReplacedSymbol,
+       iReplacementSymbol](size_t& i)
+      {
+	replaceSymbolReference(i,iReplacedSymbol,iReplacementSymbol);
+      };
+    
+    for(GrammarProduction& p : productions)
+      {
+	action(p.iLhs);
+	
+	for(size_t& iRhs : p.iRhsList)
+	  action(iRhs);
+	
+	if(p.precedenceSymbol)
+	  action(*p.precedenceSymbol);
+      }
+    
+    symbols.erase(symbols.begin()+iReplacedSymbol);
+  }
+  
+  /// Removes the given production
+  constexpr void removeProduction(const size_t& iProduction)
+  {
+    diagnostic("Removing production: ",describe(productions[iProduction]),"\n");
+    
+    // Remove production from the list
+    productions.erase(productions.begin()+iProduction);
+    
+    // Update the production references
+    for(GrammarSymbol& s : symbols)
+      for(size_t& jProduction : s.iProductions)
+	if(jProduction>iProduction)
+	  jProduction--;
+  }
+  
+  /// Replaces a non-terminal symbols that is actually named terminals
+  constexpr bool removeOneRedundantProductionIfFound()
+  {
+    bool removed=false;
+    
+    size_t iSymbol=0;
+    while(iSymbol<symbols.size() and not removed)
+      {
+	if(iSymbol!=iErrorSymbol)
+	  if(GrammarSymbol& symbol=symbols[iSymbol];symbol.iProductions.size()==1)
+	    {
+	      const size_t /* don't take by reference! */iProduction=symbol.iProductions.front();
+	      
+	      if(const GrammarProduction& production=productions[iProduction];production.iRhsList.size()==1 and production.action.empty())
+		if(const size_t /* don't take by reference! */ iActualSymbol=production.iRhsList.front();symbols[iActualSymbol].type==GrammarSymbol::Type::TERMINAL_SYMBOL)
+		  {
+		    removed=true;
+		    diagnostic("Symbol \"",symbol.name,"\" with precedence ",symbol.precedence,
+			       " is an alias for the terminal: \"",symbols[iActualSymbol].name,"\" with precedence ",symbols[iActualSymbol].precedence,"\n");
+		    
+		    removeProduction(iProduction);
+		    replaceAndRemoveSymbol(iSymbol,iActualSymbol);
+		  }
+	    }
+	
+	if(not removed)
+	  iSymbol++;
+      }
+    
+    return removed;
+  }
+  
+  /// Performs grammar optimization
+  constexpr void grammarOptimize()
+  {
+    const auto diag=
+      [this](const char* tag)
+      {
+	diagnostic("-----------------------------------\n");
+	diagnostic("list of productions ",tag," optimization:\n");
+	for(const GrammarProduction& production : productions)
+	  diagnostic(describe(production),"\n");
+	diagnostic("list of symbols ",tag," optimization:\n");
+	for(const GrammarSymbol& s : symbols)
+	  diagnostic("symbol ",s.name,"\n");
+	diagnostic("\n");
+	diagnostic("-----------------------------------\n");
+      };
+    
+    diag("before");
+    
+    bool doneSomething;
+    do
+      {
+	doneSomething=false;
+	doneSomething|=removeOneRedundantProductionIfFound();
+      }
+    while(doneSomething);
+    
+    diag("after");
+  }
+  
   /// Computes the first elements
   constexpr void calculateFirsts()
   {
@@ -2331,260 +2571,9 @@ struct Grammar
     //   }
   }
   
-  /// Adds generic symbols to the symbols list
-  constexpr void addGenericSymbols()
+  /// Set the precedence
+  void setPrecedence()
   {
-    using enum GrammarSymbol::Type;
-    
-    for(const auto& [name,type,i] :
-	  {std::make_tuple(".start",NON_TERMINAL_SYMBOL,&iStartSymbol),
-	   {".end",END_SYMBOL,&iEndSymbol},
-	   {".error",NULL_SYMBOL,&iErrorSymbol},
-	   {".whitespace",NULL_SYMBOL,&iWhitespaceSymbol}})
-      {
-	*i=symbols.size();
-	symbols.emplace_back(name,type);
-      }
-  }
-  
-  /// Matches the passed string into symbols, actions, productions, etc
-  constexpr void parseTheGrammar(const std::string_view& str)
-  {
-    /// Embeds the string into a matcher
-    Matching match(str);
-    
-    match.matchWhiteSpaceOrComments();
-    
-    if(auto id=match.matchId();not id.empty())
-      {
-	name=id;
-	
-	diagnostic("Matched grammar: \"",id,"\", skipped to ",match.ref.begin(),"\n");
-	
-	match.matchWhiteSpaceOrComments();
-	
-	if(match.matchChar('{'))
-	  {
-	    diagnostic("Matched {\n");
-	    
-	    while(matchAndParseAssociativityStatement(match) or
-		  matchAndParseWhitespaceStatement(match) or
-		  matchAndParseProductionStatement(match))
-	      diagnostic("parsed some statement\n");
-	    
-	    match.matchWhiteSpaceOrComments();
-	    if(not match.matchChar('}'))
-	      diagnostic("Unfinished grammar, reference is: \"",match.ref,"\"\n");
-	    
-	    match.matchWhiteSpaceOrComments();
-	    if(not match.ref.empty())
-	      errorEmitter("Unfinished parsing!\n");
-	    else
-	      diagnostic("Grammar parsing correctly ended\n");
-	  }
-	else
-	  errorEmitter("Empty grammar\n");
-      }
-    else
-      errorEmitter("Unmatched id to name the grammar\n");
-  }
-  
-  /// Performs some test of the grammar
-  constexpr void checkTheGrammar()
-  {
-    // Check that all symbols are referenced at least once and defined
-    for(const GrammarSymbol& s : symbols)
-      if(s.type==GrammarSymbol::Type::NON_TERMINAL_SYMBOL and s.iProductions.empty() and not s.referredAsPrecedenceSymbol)
-	errorEmitter("Undefined symbol");
-    
-    /// Count of symbols usage as rhs or precedence
-    std::vector<size_t> symbolsCount(symbols.size(),0);
-    for(const GrammarProduction& production : productions)
-      {
-	for(const size_t& r : production.iRhsList)
-	  symbolsCount[r]++;
-	
-	if(auto p=production.precedenceSymbol)
-	  symbolsCount[*p]++;
-      }
-    
-    // Check that the symbols are used
-    for(size_t iSymbol=0;iSymbol<symbols.size();iSymbol++)
-      if(const std::array<size_t,4> filt{iStartSymbol,iEndSymbol,iErrorSymbol,iWhitespaceSymbol};
-	 std::find(filt.begin(),filt.end(),iSymbol)==filt.end())
-	if(symbolsCount[iSymbol]==0)
-	  {
-	    diagnostic("Symbol ",symbols[iSymbol].name," ",iSymbol," ",iStartSymbol,"\n");
-	    errorEmitter("Unreferenced symbol");
-	  }
-  }
-  
-  constexpr void replaceRemoveSymbolReference(size_t& iTargetSymbol,
-					      const size_t& iReplacedSymbol,
-					      const size_t& iReplacementSymbol)
-  {
-    // const size_t old=target;
-    
-    if(iTargetSymbol==iReplacedSymbol)
-      iTargetSymbol=iReplacementSymbol;
-    
-    if(iTargetSymbol>iReplacedSymbol)
-      iTargetSymbol--;
-    
-    // if(old!=target)
-    //   diagnostic("before was ",old,"now is ",target,"\n");
-  }
-  
-  /// Replaces all occurrence of the first symbol with that of the second, and remove it from the list
-  constexpr void replaceAndRemoveSymbol(const size_t& iReplacedSymbol,
-					const size_t& iReplacementSymbol)
-  {
-    /// Checks that noth both symbols declared "what"
-    const auto checkNotBothDeclared=
-      [this,
-       iReplacedSymbol,
-       iReplacementSymbol](const size_t& replaced,
-			   const size_t& replacement,
-			   const char* what)
-      {
-	if(replaced!=0 and replacement!=0)
-	  errorEmitter((std::string("symbol ")+std::string(symbols[iReplacedSymbol].name)+std::string(" to be replaced by ")+std::string(symbols[iReplacementSymbol].name)+std::string(" but both have a declared ")+what).c_str());
-      };
-    
-    const size_t& replacedPrecedence=symbols[iReplacedSymbol].precedence;
-    size_t& replacementPrecedence=symbols[iReplacementSymbol].precedence;
-    
-    checkNotBothDeclared(replacedPrecedence,replacementPrecedence,"precedence");
-    
-    if(replacedPrecedence!=0 and replacementPrecedence!=0)
-      errorEmitter((std::string("symbol ")+std::string(symbols[iReplacedSymbol].name)+std::string(" to be replaced by ")+std::string(symbols[iReplacementSymbol].name)+std::string(" but both have a declared precedence")).c_str());
-    
-    if(replacedPrecedence)
-      replacementPrecedence=replacedPrecedence;
-    
-    const GrammarSymbol::Associativity& replacedAssociativity=symbols[iReplacedSymbol].associativity;
-    GrammarSymbol::Associativity& replacementAssociativity=symbols[iReplacementSymbol].associativity;
-    
-    checkNotBothDeclared((size_t)replacedAssociativity,(size_t)replacementAssociativity,"associativity");
-    
-    if(replacedAssociativity!=GrammarSymbol::Associativity::NONE)
-      replacementAssociativity=replacedAssociativity;
-    
-    /// Incapsulate the replacement of the symbol
-    const auto action=
-      [this,
-       iReplacedSymbol,
-       iReplacementSymbol](size_t& i)
-      {
-	replaceRemoveSymbolReference(i,iReplacedSymbol,iReplacementSymbol);
-      };
-    
-    for(GrammarProduction& p : productions)
-      {
-	action(p.iLhs);
-	
-	for(size_t& iRhs : p.iRhsList)
-	  action(iRhs);
-	
-	if(p.precedenceSymbol)
-	  action(*p.precedenceSymbol);
-      }
-    
-    symbols.erase(symbols.begin()+iReplacedSymbol);
-  }
-  
-  /// Removes the given production
-  constexpr void removeProduction(const size_t& iProduction)
-  {
-    diagnostic("Removing production: ",describe(productions[iProduction]),"\n");
-    
-    // Remove production from the list
-    productions.erase(productions.begin()+iProduction);
-    
-    // Update the production references
-    for(GrammarSymbol& s : symbols)
-      for(size_t& jProduction : s.iProductions)
-	if(jProduction>iProduction)
-	  jProduction--;
-  }
-  
-  /// Replaces a non-terminal symbols that is actually named terminals
-  constexpr bool removeOneRedundantProductionIfFound()
-  {
-    bool removed=false;
-    
-    size_t iSymbol=0;
-    while(iSymbol<symbols.size() and not removed)
-      {
-	if(iSymbol!=iErrorSymbol)
-	  if(GrammarSymbol& symbol=symbols[iSymbol];symbol.iProductions.size()==1)
-	    {
-	      const size_t /* don't take by reference! */iProduction=symbol.iProductions.front();
-	      
-	      if(const GrammarProduction& production=productions[iProduction];production.iRhsList.size()==1 and production.action.empty())
-		if(const size_t /* don't take by reference! */ iActualSymbol=production.iRhsList.front();symbols[iActualSymbol].type==GrammarSymbol::Type::TERMINAL_SYMBOL)
-		  {
-		    removed=true;
-		    diagnostic("Symbol \"",symbol.name,"\" with precedence ",symbol.precedence,
-			       " is an alias for the terminal: \"",symbols[iActualSymbol].name,"\" with precedence ",symbols[iActualSymbol].precedence,"\n");
-		    
-		    removeProduction(iProduction);
-		    replaceAndRemoveSymbol(iSymbol,iActualSymbol);
-		  }
-	    }
-	
-	if(not removed)
-	  iSymbol++;
-      }
-    
-    return removed;
-  }
-  
-  /// Performs grammar optimization
-  constexpr void grammarOptimize()
-  {
-    const auto diag=
-      [this](const char* tag)
-      {
-	diagnostic("-----------------------------------\n");
-	diagnostic("list of productions ",tag," optimization:\n");
-	for(const GrammarProduction& production : productions)
-	  diagnostic(describe(production),"\n");
-	diagnostic("list of symbols ",tag," optimization:\n");
-	for(const GrammarSymbol& s : symbols)
-	  diagnostic("symbol ",s.name,"\n");
-	diagnostic("\n");
-	diagnostic("-----------------------------------\n");
-      };
-    
-    diag("before");
-    
-    bool doneSomething;
-    do
-      {
-	doneSomething=false;
-	doneSomething|=removeOneRedundantProductionIfFound();
-      }
-    while(doneSomething);
-    
-    diag("after");
-  }
-  
-  constexpr Grammar(const std::string_view& str) :
-    currentPrecedence(0)
-  {
-    addGenericSymbols();
-    parseTheGrammar(str);
-    checkTheGrammar();
-    grammarOptimize();
-    calculateFirsts();
-    calculateFollows();
-    
-    // for(size_t iSymbol=0;iSymbol<symbols.size();iSymbol++)
-    //   if(const auto& s=symbols[iSymbol];s.type==GrammarSymbol::Type::NULL_SYMBOL)
-    // 	diagnostic("Symbol ",s.name," has null type\n");
-    
-    // Set the precedence
     diagnostic("-----------------------------------\n");
     for(auto& p : productions)
       {
@@ -2601,19 +2590,21 @@ struct Grammar
 	  }
       }
     
-    // Report the precedence
-    for(auto& p : productions)
-      if(const auto& pp=p.precedenceSymbol)
-	diagnostic("Precedence symbol for production \"",describe(p),"\": ",symbols[*pp].name,"\n");
-    
-    // Pre-compute goto states to anticipate their additions
+    // // Report the precedence
+    // for(auto& p : productions)
+    //   if(const auto& pp=p.precedenceSymbol)
+    // 	diagnostic("Precedence symbol for production \"",describe(p),"\": ",symbols[*pp].name,"\n");
+  }
+  
+  /// Pre-compute goto states to anticipate their additions
+  constexpr void preComputeGotoStates()
+  {
     diagnostic("-----------------------------------\n");
     
-    diagnostic("Productions--------\n");
-    for(const GrammarProduction& p : productions)
-      diagnostic(describe(p),"\n");
-    diagnostic("Productions end--------\n");
-    
+    // diagnostic("Productions--------\n");
+    // for(const GrammarProduction& p : productions)
+    //   diagnostic(describe(p),"\n");
+    // diagnostic("Productions end--------\n");
     
     //int i=0;
     for(GrammarSymbol& s : symbols)
@@ -2657,6 +2648,19 @@ struct Grammar
     for(const GrammarSymbol& s : symbols)
       for(const size_t& iP :  s.iProductionsReachableByFirstSymbol)
 	diagnostic("Symbol \"",s.name,"\" can be reached through production \"",describe(productions[iP]),"\" whose first symbol is \"",symbols[productions[iP].iRhsList.front()].name,"\"\n");
+  }
+  
+  constexpr Grammar(const std::string_view& str) :
+    currentPrecedence(0)
+  {
+    addGenericSymbols();
+    parseTheGrammar(str);
+    checkTheGrammar();
+    grammarOptimize();
+    calculateFirsts();
+    calculateFollows();
+    setPrecedence();
+    preComputeGotoStates();
     
     // Generates the states
     diagnostic("-----------------------------------\n");
@@ -2842,7 +2846,6 @@ struct Grammar
 		};
 	      
 	      diagnostic(" Lookahead ",print(iLookahead)," inserting into ",print(iPropagateToItem));
-	      
 	      
 	      const size_t n=lookaheads[iPropagateToItem].symbolIs.insert(lookahead.symbolIs);
 	      
