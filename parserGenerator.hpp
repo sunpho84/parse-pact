@@ -80,8 +80,7 @@ namespace Temptative
 inline void errorEmitter(const char* str)
 {
   fprintf(stderr,"Error: %s\n",str);
-  exit(1);
-  
+  exit(1); 
 }
 
 /// Print to terminal if not evaluated at compile time
@@ -96,7 +95,26 @@ constexpr void diagnostic(Args&&...args)
     }
 }
 
-/// Implements static polymorphysm via CRTP, while we wait for C++-23
+/// Makes a reduction on the basis of the function
+template <typename T,
+	  typename F>
+constexpr auto reduce(const std::vector<T>& v,
+		      const F& f) -> decltype(f(std::declval<T>()))
+{
+  if(v.size())
+    {
+      auto t=f(v.front());
+      
+      for(const T& vi : v)
+	t=f(vi,t);
+      
+      return t;
+    }
+  else
+    return {};
+}
+
+/// Implements static polymorphism via CRTP, while we wait for C++-23
 template <typename T>
 struct StaticPolymorphic
 {
@@ -866,7 +884,7 @@ template <typename T>
 struct BaseCharRanges :
   StaticPolymorphic<T>
 {
-  /// Import the static polymorphysm cast
+  /// Import the static polymorphism cast
   using StaticPolymorphic<T>::self;
   
   /// Insert a single char
@@ -1376,7 +1394,7 @@ template <typename T>
 struct BaseRegexParser :
   StaticPolymorphic<T>
 {
-  /// Import the static polymorphysm cast
+  /// Import the static polymorphism cast
   using StaticPolymorphic<T>::self;
   
   /// Parse a string
@@ -1571,11 +1589,11 @@ struct DynamicRegexParser :
 	  if(dStates[iDState].accepting)
 	    printf(" accepting token %zu\n",dStates[iDState].iToken);
 	}
-      }
-    
+  }
+  
   /// Gets the parameters needed to build the constexpr parser
-    constexpr RegexMachineSpecs getSizes() const
-    {
+  constexpr RegexMachineSpecs getSizes() const
+  {
     return {.nDStates=dStates.size(),.nTranstitions=transitions.size()};
   }
 };
@@ -1620,7 +1638,7 @@ constexpr auto createParserFromRegex(const T*...str)
     return ConstexprRegexParser<RPS>(*parseTree);
 }
 
-/// Create parser from regexp
+/// Estimates the parser size
 template <typename...T>
 requires(std::is_same_v<char,T> and ...)
 constexpr auto estimateRegexParserSize(const T*...str)
@@ -1680,6 +1698,9 @@ struct GrammarSymbol
     nullable(false)
   {
   }
+  
+  /// Default constructor
+  constexpr GrammarSymbol()=default;
   
   /// Threeway comparison
   bool operator<=>(const GrammarSymbol& oth) const = default;
@@ -1955,6 +1976,35 @@ struct RegexToken
   size_t iSymbol;
 };
 
+/// Specifications of the grammar
+struct GrammarSpecs
+{
+  /// Number of symbols
+  const size_t nSymbols;
+  
+  /// Number of productions
+  const size_t nProductions;
+  
+  /// Size of the production table
+  const size_t productionsTableSize;
+  
+  /// Detects if the grammar is empty
+  constexpr bool isNull() const
+  {
+    return nSymbols==0 and nProductions==0;
+  }
+};
+
+/// Base functionality of the gramamr
+template <typename T>
+struct BaseGrammar :
+  StaticPolymorphic<T>
+{
+  /// Import the static polymorphism cast
+  using StaticPolymorphic<T>::self;
+};
+
+/// Grammar with all the functions to create it
 struct Grammar
 {
   std::string_view name;
@@ -2074,7 +2124,7 @@ struct Grammar
 	while(auto m=matchAndParseSymbol(matchin))
 	  {
 	    GrammarSymbol& s=symbols[*m];
-	    diagnostic("Matched symbol: ",std::quoted(s.name),"\n");
+	    diagnostic("Matched symbol: \"",name,"\"\n");
 	    
 	    s.associativity=currentAssociativity;
 	    s.precedence=currentPrecedence;
@@ -2576,7 +2626,7 @@ struct Grammar
   }
   
   /// Set the precedence
-  void setPrecedence()
+  constexpr void setPrecedence()
   {
     diagnostic("-----------------------------------\n");
     for(auto& p : productions)
@@ -2871,6 +2921,69 @@ struct Grammar
       }
   }
   
+  /// Inserts a reduce transition
+  constexpr void insertReduceTransition(std::vector<GrammarTransition>& transitions,
+					const size_t& iSymbol,
+					const size_t& iProduction)
+  {
+    transitions.push_back(GrammarTransition::getReduce(iSymbol,iProduction));
+    diagnostic("        inserting new reduce transitions\n");
+  }
+  
+  /// Try to solve a shift/reduce conflict
+  constexpr void dealWithShiftReduceConflict(GrammarTransition& transition,
+					     const GrammarSymbol& symbol,
+					     const size_t& iProduction)
+  {
+    const GrammarProduction& production=productions[iProduction];
+    const size_t productionPrecedence=production.precedence(symbols);
+    
+    if(productionPrecedence==0 or symbol.precedence==0 or
+       (symbol.precedence==productionPrecedence and symbol.associativity==GrammarSymbol::Associativity::NONE))
+      errorEmitter((std::string("shift/reduce conflict for '")+std::string(symbols[production.iLhs].name)+"' on '"+std::string(symbol.name)+
+		    "' ought to transition: "+describe(transition)+"\nproduction precedence: "+std::to_string(productionPrecedence)+" symbol precedence: "+std::to_string(symbol.precedence)+" symbol associativity: "+std::to_string((int)symbol.associativity)).c_str());
+    else
+      if(productionPrecedence>symbol.precedence or (symbol.precedence==productionPrecedence and symbol.associativity==GrammarSymbol::Associativity::RIGHT))
+	{
+	  diagnostic("overriding shift ",describe(transition));
+	  transition.type=GrammarTransition::REDUCE;
+	  transition.iStateOrProduction=iProduction;
+	  diagnostic(" into reduce: ",describe(transition));
+	}
+      else
+	{
+	  diagnostic("leaving already esisting transition ",describe(transition)," given that ");
+	  if(productionPrecedence<symbol.precedence)
+	    diagnostic(" the production has precedence ",productionPrecedence," lesser than the symbol ",symbol.precedence);
+	  else
+	    diagnostic(" the production has the same precedence ",productionPrecedence," of the symbol ,which has associatity",(int)symbol.associativity,
+		       " different from right (",(int)GrammarSymbol::Associativity::RIGHT);
+	}
+  }
+  
+  /// Try to solve a reduce/reduce conflict
+  constexpr void dealWithReduceReduceConflict(GrammarTransition& transition,
+					      const GrammarSymbol& symbol,
+					      const size_t& iProduction)
+  {
+    const GrammarProduction& production=productions[iProduction];
+    const size_t productionPrecedence=production.precedence(symbols);
+    
+    if(const size_t& transitionPrecedence=productions[transition.iStateOrProduction].precedence(symbols);productionPrecedence==0 or transitionPrecedence==0 or
+       productionPrecedence==transitionPrecedence)
+      errorEmitter((std::string("reduce/reduce conflict for '")+std::string(symbols[production.iLhs].name)+"' on '"+std::string(symbol.name)+
+		    "' ought to transition: "+describe(transition)+"\nproduction precedence: "+std::to_string(productionPrecedence)+" transition precedence: "+std::to_string(transitionPrecedence)).c_str());
+    else
+      if(productionPrecedence>transitionPrecedence)
+	{
+	  diagnostic("overriding reduce: ",describe(transition));
+	  transition.iStateOrProduction=iProduction;
+	  diagnostic(" into reduce: ",describe(transition));
+	}
+      else
+	diagnostic("leaving already esisting transition ",describe(transition)," given that the production has precedence ",productionPrecedence," lesser than the transition ",transitionPrecedence);
+  }
+  
   /// Generate reduce or shift transitions
   constexpr void generateTransitions()
   {
@@ -2890,71 +3003,45 @@ struct Grammar
 	    const GrammarProduction& production=productions[iProduction];
 	    
 	    if(item.position>=production.iRhsList.size())
-	      {
-		for(size_t iSymbol=0;iSymbol<symbols.size();iSymbol++)
-		  {
-		    const GrammarSymbol& symbol=symbols[iSymbol];
-		    
-		    if(lookaheads[iItem].symbolIs.get(iSymbol))
-		      {
-			if(not stateDescribed)
-			  {
-			    diagnostic("State: \n",describe(state));
-			    stateDescribed=true;
-			  }
-			
-			if(not itemDescribed)
-			  {
-			    diagnostic("   in item ",describe(item),"\n     reduces:\n");
-			    itemDescribed=true;
-			  }
-			
-			diagnostic("      at symbol ",symbols[iSymbol].name,"\n");
-			
-			/// Position of the transition in the state
-			size_t iTransition=0;
-			std::vector<GrammarTransition>& transitions=grammarTransitionsPerState[iState];
-			while(iTransition<transitions.size() and transitions[iTransition].iSymbol!=iSymbol)
-			  iTransition++;
-			
-			if(iTransition==transitions.size())
-			  {
-			    transitions.push_back(GrammarTransition::getReduce(iSymbol,iProduction));
-			    diagnostic("        inserting new reduce transitions, it is state n.",iTransition,"\n");
-			  }
-			else
-			  {
-			    diagnostic("!!!!panic! state\n",describe(state)," has already transition:\n",describe(transitions[iTransition])," for symbol \'",symbol.name,"\'\n");
-			    
-			    const size_t productionPrecedence=production.precedence(symbols);
-			    
-			    if(GrammarTransition& transition=transitions[iTransition];transition.type==GrammarTransition::Type::SHIFT)
-			      {
-				if(productionPrecedence==0 or symbol.precedence==0 or (symbol.precedence==productionPrecedence and symbol.associativity==GrammarSymbol::Associativity::NONE))
-				  errorEmitter((std::string("shift/reduce conflict for '")+std::string(symbols[production.iLhs].name)+"' on '"+std::string(symbol.name)+
-						"' ought to transition: "+describe(transition)+"\nproduction precedence: "+std::to_string(productionPrecedence)+" symbol precedence: "+std::to_string(symbol.precedence)+" symbol associativity: "+std::to_string((int)symbol.associativity)).c_str());
-				else
-				  if(productionPrecedence>symbol.precedence or (symbol.precedence==productionPrecedence and symbol.associativity==GrammarSymbol::Associativity::RIGHT))
-				    {
-				      diagnostic("overriding shift ",describe(transition));
-				      transition.type=GrammarTransition::REDUCE;
-				      transition.iStateOrProduction=iProduction;
-				      diagnostic(" into reduce: ",describe(transition));
-				    }
-				  else
-				    {
-				      diagnostic("leaving transation ",describe(transition)," as ");
-				      if(productionPrecedence<symbol.precedence)
-					diagnostic(" the production has precedence ",productionPrecedence," lesser than the symbol ",symbol.precedence);
-				      else
-					diagnostic(" the production has the same precedence ",productionPrecedence," of the symbol ,which has associatity",(int)symbol.associativity,
-						   " different from right (",(int)GrammarSymbol::Associativity::RIGHT);
-				    }
-			      }
-			  }
-		      }
-		  }
-	      }
+	      for(size_t iSymbol=0;iSymbol<symbols.size();iSymbol++)
+		{
+		  const GrammarSymbol& symbol=symbols[iSymbol];
+		  
+		  if(lookaheads[iItem].symbolIs.get(iSymbol))
+		    {
+		      if(not stateDescribed)
+			{
+			  diagnostic("State: \n",describe(state));
+			  stateDescribed=true;
+			}
+		      
+		      if(not itemDescribed)
+			{
+			  diagnostic("   in item ",describe(item),"\n     reduces:\n");
+			  itemDescribed=true;
+			}
+		      
+		      diagnostic("      at symbol ",symbols[iSymbol].name,"\n");
+		      
+		      /// Position of the transition in the state
+		      size_t iTransition=0;
+		      std::vector<GrammarTransition>& transitions=grammarTransitionsPerState[iState];
+		      while(iTransition<transitions.size() and transitions[iTransition].iSymbol!=iSymbol)
+			iTransition++;
+		      
+		      if(iTransition==transitions.size())
+			insertReduceTransition(transitions,iSymbol,iProduction);
+		      else
+			{
+			  diagnostic("!!!!panic! state\n",describe(state)," has already transition:\n",describe(transitions[iTransition])," for symbol \'",symbol.name,"\'\n");
+			  
+			  if(GrammarTransition& transition=transitions[iTransition];transition.type==GrammarTransition::Type::SHIFT)
+			    dealWithShiftReduceConflict(transition,symbol,iProduction);
+			  else
+			    dealWithReduceReduceConflict(transition,symbol,iProduction);
+			}
+		    }
+		}
 	  }
       }
   }
@@ -2966,14 +3053,95 @@ struct Grammar
     parseTheGrammar(str);
     checkTheGrammar();
     grammarOptimize();
+    
     calculateFirsts();
     calculateFollows();
     setPrecedence();
     preComputeGotoStates();
     generateStates();
+    
     generateSpontaneousLookahead();
     generateGotoItems();
     propagateLookaheads();
     generateTransitions();
   }
+  
+  /// Gets the parameters needed to build the constexpr grammar
+  constexpr GrammarSpecs getSizes() const
+  {
+    return {.nSymbols=symbols.size(),
+	    .nProductions=productions.size(),
+	    .productionsTableSize=reduce(productions,[](const GrammarProduction& p,
+							const std::optional<size_t>& x=std::nullopt)
+	    {
+	      if(x)
+		return *x+p.iRhsList.size()+1;
+	      else
+		return (size_t)0;
+	    })};
+  }
 };
+
+/// Grammar in fixed size tables
+template <GrammarSpecs Specs>
+struct ConstexprGrammar :
+  BaseGrammar<ConstexprGrammar<Specs>>
+{
+  /// Symbols accepted by the grammar
+  std::array<std::string_view,Specs.nSymbols> symbols;
+  
+  /// Production entries table
+  std::array<size_t,Specs.productionsTableSize> productionTable;
+  
+  /// Production defined in terms of table
+  struct ConstexprProduction
+  {
+    /// Begin point in the production entry table
+    size_t begin;
+    
+    /// Number of rhs
+    size_t nRhs;
+  };
+  
+  /// Productions
+  std::array<ConstexprProduction,Specs.nProductions> productions;
+  
+  /// Create from dynamic-sized grammar
+  constexpr ConstexprGrammar(const Grammar& oth)
+  {
+    for(size_t i=0;i<Specs.nSymbols;i++)
+      this->symbols[i]=oth.symbols[i].name;
+    
+    for(size_t posInProductionTable=0,iProduction=0;iProduction<Specs.nProductions;iProduction++)
+      {
+	const GrammarProduction& production=oth.productions[iProduction];
+	ConstexprProduction& cExprProduction=this->productions[iProduction];
+	
+	cExprProduction.begin=posInProductionTable;
+	productionTable[posInProductionTable++]=production.iLhs;
+	
+	cExprProduction.nRhs=production.iRhsList.size();
+	for(const size_t& iRhs : production.iRhsList)
+	  productionTable[posInProductionTable++]=iRhs;
+      }
+  }
+};
+
+/// Create grammar from string
+template <GrammarSpecs GS=GrammarSpecs{}>
+constexpr auto createGrammar(const std::string_view& str)
+{
+  /// Creates the grammar
+  Grammar grammar=str;
+  
+  if constexpr(GS.isNull())
+    return grammar;
+  else
+    return ConstexprGrammar<GS>(grammar);
+}
+
+/// Estimates the grammar size
+constexpr GrammarSpecs estimateGrammarSize(const std::string_view& str)
+{
+  return createGrammar(str).getSizes();
+}
