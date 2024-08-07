@@ -80,7 +80,7 @@ namespace Temptative
 inline void errorEmitter(const char* str)
 {
   fprintf(stderr,"Error: %s\n",str);
-  exit(1); 
+  exit(1);
 }
 
 /// Print to terminal if not evaluated at compile time
@@ -113,6 +113,11 @@ constexpr auto reduce(const std::vector<T>& v,
   else
     return {};
 }
+
+/// Constant type T if B is true, non const otherwise
+template <bool B,
+	  typename T>
+using ConstIf=std::conditional_t<B,const T,T>;
 
 /// Implements static polymorphism via CRTP, while we wait for C++-23
 template <typename T>
@@ -213,6 +218,70 @@ struct BitSet
       }
     
     return r;
+  }
+};
+
+/////////////////////////////////////////////////////////////////
+
+/// Parameters to hold a vector of vectors of heterogeneous size, on the stack
+struct Stack2DVectorPars
+{
+  /// Total number of entries
+  size_t nEntries;
+  
+  /// Number of rows
+  size_t nRows;
+  
+  constexpr bool isNull() const
+  {
+    return nRows==0;
+  }
+};
+
+template <typename T,
+	  Stack2DVectorPars Pars>
+struct Stack2DVector
+{
+  struct RowPars
+  {
+    size_t begin;
+    
+    size_t size;
+  };
+  
+  std::array<T,Pars.nEntries> data;
+  
+  std::array<RowPars,Pars.nRows> rowPars;
+  
+  constexpr const T& operator()(const size_t& row,
+				const size_t& col) const
+  {
+    return data[rowPars[row].begin+col];
+  }
+  
+  constexpr const size_t& rowSize(const size_t& row) const
+  {
+    return rowPars[row].size;
+  }
+  
+  constexpr const size_t size() const
+  {
+    return rowPars.size();
+  }
+
+  template <typename F>
+  constexpr void fillWith(const size_t& nRows,
+			  const F& getRow)
+  {
+    for(size_t iEntry=0,iRow=0;iRow<nRows;iRow++)
+      {
+	rowPars[iRow].begin=iEntry;
+	
+	for(const T& entry : getRow(iRow))
+	  data[iEntry++]=entry;
+	
+	rowPars[iRow].size=iEntry-rowPars[iRow].begin;
+      }
   }
 };
 
@@ -1982,16 +2051,16 @@ struct GrammarSpecs
   /// Number of symbols
   const size_t nSymbols;
   
-  /// Number of productions
-  const size_t nProductions;
+  const Stack2DVectorPars productionPars;
   
-  /// Size of the production table
-  const size_t productionsTableSize;
+  const size_t nItems;
+  
+  const Stack2DVectorPars statePars;
   
   /// Detects if the grammar is empty
   constexpr bool isNull() const
   {
-    return nSymbols==0 and nProductions==0;
+    return nSymbols==0 and productionPars.isNull() and nItems==0 and statePars.isNull();
   }
 };
 
@@ -3069,16 +3138,29 @@ struct Grammar
   /// Gets the parameters needed to build the constexpr grammar
   constexpr GrammarSpecs getSizes() const
   {
-    return {.nSymbols=symbols.size(),
-	    .nProductions=productions.size(),
-	    .productionsTableSize=reduce(productions,[](const GrammarProduction& p,
-							const std::optional<size_t>& x=std::nullopt)
-	    {
-	      if(x)
-		return *x+p.iRhsList.size()+1;
-	      else
-		return (size_t)0;
-	    })};
+    return
+      {.nSymbols=symbols.size(),
+       .productionPars{.nEntries=reduce(productions,
+					[](const GrammarProduction& p,
+					   const std::optional<size_t>& x=std::nullopt)
+					{
+					  if(x)
+					    return *x+p.iRhsList.size()+1;
+					  else
+					    return (size_t)0;
+					}),
+	 .nRows=productions.size()},
+       .nItems=items.size(),
+       .statePars{.nEntries=reduce(states,
+				   [](const GrammarState& s,
+				      const std::optional<size_t>& x=std::nullopt)
+				   {
+				     if(x)
+				       return *x+s.iItems.size();
+				     else
+				       return (size_t)0;
+				   }),
+	 .nRows=states.size()}};
   }
 };
 
@@ -3087,43 +3169,158 @@ template <GrammarSpecs Specs>
 struct ConstexprGrammar :
   BaseGrammar<ConstexprGrammar<Specs>>
 {
+  struct Item
+  {
+    size_t iProduction;
+    
+    size_t position;
+  };
+  
   /// Symbols accepted by the grammar
   std::array<std::string_view,Specs.nSymbols> symbols;
   
-  /// Production entries table
-  std::array<size_t,Specs.productionsTableSize> productionTable;
+  Stack2DVector<size_t,Specs.productionPars> productionsData;
   
-  /// Production defined in terms of table
-  struct ConstexprProduction
+  std::array<Item,Specs.nItems> items;
+  
+  Stack2DVector<size_t,Specs.statePars> statesData;
+  
+  /// Accessor to a production
+  struct ProductionRef
   {
-    /// Begin point in the production entry table
-    size_t begin;
+    const ConstexprGrammar* g;
     
-    /// Number of rhs
-    size_t nRhs;
+    const size_t iProduction;
+    
+    constexpr const size_t nRhs() const
+    {
+      return g->productionsData.rowSize(iProduction)-1;
+    }
+    
+    constexpr const size_t& iLhs() const
+    {
+      return g->productionsData(iProduction,0);
+    }
+    
+    constexpr const size_t& iRhs(const size_t& iiRhs) const
+    {
+      return g->productionsData(iProduction,iiRhs+1);
+    }
+    
+    constexpr std::string describe() const
+    {
+      std::string out=(std::string)g->symbols[iLhs()]+": ";
+      
+      for(size_t iiRhs=0;iiRhs<nRhs();iiRhs++)
+	out+=(std::string)g->symbols[iRhs(iiRhs)]+" ";
+      
+      return out;
+    }
   };
   
-  /// Productions
-  std::array<ConstexprProduction,Specs.nProductions> productions;
+  ProductionRef production(const size_t& iProduction) const
+  {
+    return {this,iProduction};
+  }
+  
+  struct ItemRef
+  {
+    const ConstexprGrammar* g;
+    
+    const size_t iItem;
+    
+    constexpr std::string describe()
+    {
+      const auto& item=g->items[iItem];
+      
+      const ProductionRef p=g->production(item.iProduction);
+      
+      std::string out=(std::string)g->symbols[p.iLhs()]+": ";
+      
+      for(size_t iIRhs=0,max=p.nRhs();iIRhs<=max;iIRhs++)
+	{
+	  if(iIRhs==item.position)
+	    out+=" . ";
+	  
+	  if(iIRhs<max)
+	    {
+	      out+=" ";
+	      out+=g->symbols[p.iRhs(iIRhs)];
+	  }
+      }
+      
+      return out;
+    }
+  };
+  
+  constexpr ItemRef item(const size_t& iItem) const
+  {
+    return {this,iItem};
+  }
+  
+  struct StateRef
+  {
+    const ConstexprGrammar* g;
+    
+    const size_t iState;
+    
+    constexpr const size_t nItems() const
+    {
+      return g->statesData.rowSize(iState);
+    }
+    
+    constexpr const size_t& iItem(const size_t& iiItem) const
+    {
+      return g->statesData(iState,iiItem);
+    }
+    
+    constexpr ItemRef item(const size_t& _iItem) const
+    {
+      return g->item(iItem(_iItem));
+    }
+    
+    constexpr std::string describe(const std::string& pref="") const
+    {
+      std::string out;
+      
+      for(size_t iiItem=0;iiItem<nItems();iiItem++)
+	out+=pref+"| "+item(iiItem).describe()+"\n";
+      
+      return out;
+    }
+  };
+  
+  constexpr StateRef state(const size_t& iState) const
+  {
+    return {this,iState};
+  }
   
   /// Create from dynamic-sized grammar
   constexpr ConstexprGrammar(const Grammar& oth)
   {
-    for(size_t i=0;i<Specs.nSymbols;i++)
-      this->symbols[i]=oth.symbols[i].name;
+    for(size_t iSymbol=0;iSymbol<Specs.nSymbols;iSymbol++)
+      this->symbols[iSymbol]=oth.symbols[iSymbol].name;
     
-    for(size_t posInProductionTable=0,iProduction=0;iProduction<Specs.nProductions;iProduction++)
+    for(size_t iItem=0;iItem<Specs.nItems;iItem++)
       {
-	const GrammarProduction& production=oth.productions[iProduction];
-	ConstexprProduction& cExprProduction=this->productions[iProduction];
-	
-	cExprProduction.begin=posInProductionTable;
-	productionTable[posInProductionTable++]=production.iLhs;
-	
-	cExprProduction.nRhs=production.iRhsList.size();
-	for(const size_t& iRhs : production.iRhsList)
-	  productionTable[posInProductionTable++]=iRhs;
+	this->items[iItem].iProduction=oth.items[iItem].iProduction;
+	this->items[iItem].position=oth.items[iItem].position;
       }
+    
+    productionsData.fillWith(oth.productions.size(),
+			     [&oth](const size_t& iProduction)
+			     {
+			       const GrammarProduction& p=oth.productions[iProduction];
+			       
+			       std::vector<size_t> res(p.iRhsList.size()+1);
+			       res[0]=p.iLhs;
+			       for(size_t iiRhs=0;iiRhs<p.iRhsList.size();iiRhs++)
+				 res[iiRhs+1]=p.iRhsList[iiRhs];
+			       
+			       return res;
+			     });
+    
+    statesData.fillWith(oth.states.size(),[&oth](const size_t& iState)->const std::vector<size_t>&{return oth.states[iState].iItems;});
   }
 };
 
