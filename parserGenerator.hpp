@@ -3133,6 +3133,8 @@ struct Grammar
     generateGotoItems();
     propagateLookaheads();
     generateTransitions();
+    
+    generateRegex()
   }
   
   /// Gets the parameters needed to build the constexpr grammar
@@ -3176,6 +3178,10 @@ struct ConstexprGrammar :
     size_t position;
   };
   
+  struct Transition
+  {
+  };
+  
   /// Symbols accepted by the grammar
   std::array<std::string_view,Specs.nSymbols> symbols;
   
@@ -3185,28 +3191,36 @@ struct ConstexprGrammar :
   
   Stack2DVector<size_t,Specs.statePars> statesData;
   
+  //std::array<Transition,Specs.nTransitions> transitions;
+  
   /// Accessor to a production
   struct ProductionRef
   {
+    /// Original grammar
     const ConstexprGrammar* g;
     
+    /// Index of the production
     const size_t iProduction;
     
+    /// Number of rhs symbols
     constexpr const size_t nRhs() const
     {
       return g->productionsData.rowSize(iProduction)-1;
     }
     
+    /// Index of the lhs symbol
     constexpr const size_t& iLhs() const
     {
       return g->productionsData(iProduction,0);
     }
     
+    /// Index of the iiRhs-th rhs symbol
     constexpr const size_t& iRhs(const size_t& iiRhs) const
     {
       return g->productionsData(iProduction,iiRhs+1);
     }
     
+    /// Describes the production
     constexpr std::string describe() const
     {
       std::string out=(std::string)g->symbols[iLhs()]+": ";
@@ -3218,6 +3232,7 @@ struct ConstexprGrammar :
     }
   };
   
+  /// Returns a reference to a production
   ProductionRef production(const size_t& iProduction) const
   {
     return {this,iProduction};
@@ -3290,6 +3305,7 @@ struct ConstexprGrammar :
     }
   };
   
+  /// Returns a reference to the state
   constexpr StateRef state(const size_t& iState) const
   {
     return {this,iState};
