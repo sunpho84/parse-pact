@@ -238,42 +238,52 @@ struct Stack2DVectorPars
   }
 };
 
+/// Holds a 2D table with rows of heterogeneous length into a single
+/// array, allocated on stack
 template <typename T,
 	  Stack2DVectorPars Pars>
 struct Stack2DVector
 {
+  /// Parameters to specify a row into the table
   struct RowPars
   {
+    /// Begin of the row
     size_t begin;
     
+    /// Row length
     size_t size;
   };
   
+  /// Holds the data
   std::array<T,Pars.nEntries> data;
   
+  /// Holds the parameters defining the rows positions
   std::array<RowPars,Pars.nRows> rowPars;
   
+  /// Access element (row, col)
   constexpr const T& operator()(const size_t& row,
 				const size_t& col) const
   {
     return data[rowPars[row].begin+col];
   }
   
+  /// Returns the length of a row
   constexpr const size_t& rowSize(const size_t& row) const
   {
     return rowPars[row].size;
   }
   
+  /// Returns the total size
   constexpr const size_t size() const
   {
     return rowPars.size();
   }
-
+  
+  /// Fills the entries using the function getRow
   template <typename F>
-  constexpr void fillWith(const size_t& nRows,
-			  const F& getRow)
+  constexpr void fillWith(const F& getRow)
   {
-    for(size_t iEntry=0,iRow=0;iRow<nRows;iRow++)
+    for(size_t iEntry=0,iRow=0;iRow<Pars.nRows;iRow++)
       {
 	rowPars[iRow].begin=iEntry;
 	
