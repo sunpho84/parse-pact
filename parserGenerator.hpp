@@ -759,7 +759,7 @@ struct RegexParserNode
   char endChar;
   
   /// Id of the matched token
-  int tokId;
+  size_t tokId;
   
   /// Id of the node
   size_t id;
@@ -806,7 +806,7 @@ struct RegexParserNode
 	::printf("}\n");
 	break;
       case(TOKEN):
-	::printf("tok %d\n",tokId);
+	::printf("tok %zu\n",tokId);
 	break;
       default:
 	::printf("\n");
@@ -929,7 +929,7 @@ struct RegexParserNode
 			    std::vector<RegexParserNode>&& subNodes,
 			    const char begChar='\0',
 			    const char endChar='\0',
-			    const int tokId=0) :
+			    const size_t tokId=0) :
     type(type),
     subNodes(subNodes),
     begChar(begChar),
@@ -3133,8 +3133,6 @@ struct Grammar
     generateGotoItems();
     propagateLookaheads();
     generateTransitions();
-    
-    generateRegex()
   }
   
   /// Gets the parameters needed to build the constexpr grammar
