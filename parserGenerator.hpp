@@ -1601,6 +1601,16 @@ struct RegexMachineSpecs
   }
 };
 
+/// Result of parsing
+struct ParseResult
+{
+  /// Parsed string
+  std::string_view str;
+  
+  /// Recognized token
+  size_t iToken;
+};
+
 /// Base functionality of the regex parser
 template <typename T>
 struct BaseRegexParser :
@@ -1610,8 +1620,10 @@ struct BaseRegexParser :
   using StaticPolymorphic<T>::self;
   
   /// Parse a string
-  constexpr std::optional<size_t> parse(std::string_view v) const
+  constexpr std::optional<ParseResult> parse(std::string_view v) const
   {
+    const auto matchBegin=v.begin();
+    
     size_t dState=0;
     
     while(dState<self().dStates.size())
@@ -1638,7 +1650,7 @@ struct BaseRegexParser :
 	  }
 	else
 	  if(self().dStates[dState].accepting)
-	    return {self().dStates[dState].iToken};
+	    return ParseResult{std::string_view{matchBegin,v.begin()},self().dStates[dState].iToken};
 	  else
 	    dState=self().dStates.size();
       }
@@ -3330,13 +3342,13 @@ struct Grammar
   /// Generate the regex parser
   constexpr void generateRegexParser()
   {
-    std::vector<RegexToken> tokens;
+    std::vector<RegexToken> tokens=whitespaceTokens;
     
     for(size_t iSymbol=0;iSymbol<symbols.size();iSymbol++)
       if(symbols[iSymbol].type==GrammarSymbol::Type::TERMINAL_SYMBOL)
 	tokens.emplace_back(symbols[iSymbol].name,iSymbol);
     
-    diagnostic("List of TERMINAL regex recognized by the grammar:\n");
+    diagnostic("List of TERMINAL and whitespaces regex recognized by the grammar:\n");
     for(const auto& [name,iToken] : tokens)
       diagnostic("   ",name," -> ",iToken,"\n");
     

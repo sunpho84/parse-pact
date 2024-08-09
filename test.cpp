@@ -26,9 +26,9 @@ constexpr void test()
   /// Regex parser matcher
   constexpr auto parser=createParserFromRegex<specs>(jsonNumberPattern,jsonRealNumberPattern,testNotContainingHPattern);
   
-  static_assert(parser.parse("-332.235e-34")==JSON_REAL_NUMER);
-  static_assert(parser.parse("33")==JSON_NUMBER);
-  static_assert(parser.parse("ello world!")==TEXT_NOT_CONTAINING_H);
+  static_assert(parser.parse("-332.235e-34")->iToken==JSON_REAL_NUMER);
+  static_assert(parser.parse("33")->iToken==JSON_NUMBER);
+  static_assert(parser.parse("ello world!")->iToken==TEXT_NOT_CONTAINING_H);
   
   // if(constexpr auto u=parser.parse("-332.235e-34"))
   //   printf("tok %zu\n",*u);
@@ -70,7 +70,7 @@ int main(int narg,char** arg)
   
   static constexpr char xmlGrammar[]=
     "xml {\
-   %whitespace \"[ \\t\\r\\n]*\";\
+   %whitespace \"[ \\t\\r\\n]+\";\
    %left '<' '>';\
    %left name;\
    document: prolog element [document];\
@@ -126,6 +126,50 @@ int main(int narg,char** arg)
   diagnostic("nTransitions: ",specs.regexMachinePars.nTransitions,"\n");
   diagnostic("\n");
 
+
+  constexpr char xmlExample[]=
+#include "xmlExample.xml"
+	      ;
+  
+  std::string_view x=xmlExample;
+  bool m;
+  size_t i=0;
+  do
+    {
+      diagnostic("/////////////////////////////////////////////////////////////////\n");
+      diagnostic("Parsed ",i," tokens, going to parse: ",x,"\n");
+      
+      auto r=c.regexParser.parse(x);
+      m=r.has_value();
+      
+      if(r)
+	{
+	  x={x.begin()+r->str.length(),x.end()};
+	  diagnostic("matched string: \"",r->str,"\" corresponding to token ",r->iToken," \"",c.symbols[r->iToken].name,"\"\n");
+	  i++;
+	}
+      else
+	diagnostic("unable to parse \"",x,"\"\n");
+    }
+  while(m and x.length());
+  
+  // diagnostic("/////////////////////////////////////////////////////////////////\n");
+  // auto par=createParserFromRegex("<",">","<\\?xml","\\?>","/>","</","=","[A-Za-z_:][A-Za-z0-9_:\\.-]*");
+  // if(const auto u=par.parse("<ciao"))
+  //   diagnostic("parsed: ",*u,"\n");
+  // else
+  //   diagnostic("unable to parse\n");
+   // < -> 4
+   // > -> 5
+   // <\?xml -> 9
+   // \?> -> 11
+   // /> -> 13
+   // </ -> 14
+   // = -> 16
+   // [A-Za-z_:][A-Za-z0-9_:\.-]* -> 17
+   // [\"']:string: -> 18
+
+  
 //   constexpr GrammarParser<jsonGrammar> jSonGrammarParser;
 
 //   constexpr char jsonText[]=/* Some json text*/;
