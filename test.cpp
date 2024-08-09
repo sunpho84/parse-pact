@@ -26,10 +26,9 @@ constexpr void test()
   /// Regex parser matcher
   constexpr auto parser=createParserFromRegex<specs>(jsonNumberPattern,jsonRealNumberPattern,testNotContainingHPattern);
   
-  // static_assert(parser.parse("-332.235e-34")==JSON_REAL_NUMER);
-  // static_assert(parser.parse("33")==JSON_NUMBER);
-  // static_assert(parser.parse("ello world!")==TEXT_NOT_CONTAINING_H);
-  
+  static_assert(parser.parse("-332.235e-34")==JSON_REAL_NUMER);
+  static_assert(parser.parse("33")==JSON_NUMBER);
+  static_assert(parser.parse("ello world!")==TEXT_NOT_CONTAINING_H);
   
   // if(constexpr auto u=parser.parse("-332.235e-34"))
   //   printf("tok %zu\n",*u);
