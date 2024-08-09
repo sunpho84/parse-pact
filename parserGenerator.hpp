@@ -1212,8 +1212,6 @@ struct MergedCharRanges :
       ranges.begin();
     
     // Find where to insert the range
-    while(cur!=ranges.end() and cur->second<b)
-      cur++;
     if(ranges.size())
       {
 	diagnostic("Skipping all ranges until finding one which ends after the beginning of that to be inserted\n");
@@ -1236,7 +1234,7 @@ struct MergedCharRanges :
       std::distance(ranges.begin(),cur);
     
     // Insert the beginning of the range if not present
-    if(cur==ranges.end() or cur->second<b)
+    if(cur==ranges.end() or e<cur->first)
       {
 	diagnostic("Inserting ",rangeDescribe(head)," at ",i,"\n");
 	ranges.insert(cur,head);
