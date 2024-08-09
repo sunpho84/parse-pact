@@ -492,12 +492,16 @@ struct Matching
   /// Match a single char
   constexpr bool matchChar(const char& c)
   {
+    diagnostic("trying to match char '",c,"'\n");
+    
     const bool accepting=
       (not ref.empty()) and ref.starts_with(c);
     
     if(not ref.empty())
-      diagnostic("parsing char: ",ref.front(),", ");
-    diagnostic((accepting?"accepted":"not accepted"),", expected char: ",c,"\n");
+      diagnostic("  parsing char: ",ref.front(),"\n");
+    else
+      diagnostic("  no char can be parsed\n");
+    diagnostic((accepting?"accepted":"not accepted")," (expected char: ",c,")\n");
     
     if(accepting)
       advance();
@@ -508,9 +512,17 @@ struct Matching
   /// Matches a possibly escaped char
   constexpr char matchPossiblyEscapedCharNotIn(const std::string_view& notIn)
   {
+    diagnostic("Trying to match any char not in: ",notIn,"\n");
+    
     if(const char c=matchCharNotIn(notIn))
       if(const char d=(c=='\\')?maybeEscape(matchAnyChar()):c)
-	return d;
+	{
+	  diagnostic("  Matched : '",d,"'\n");
+	  
+	  return d;
+	}
+    
+    diagnostic("  Unable to match\n");
     
     return '\0';
   }
@@ -527,7 +539,7 @@ struct Matching
     while(matchRes and not (str.empty() or ref.empty()))
       if(matchRes.state&=ref.starts_with(str.front()))
 	{
-	  // diagnostic("matched ",str.front(),"\n");
+	  diagnostic("  matched ",str.front(),"\n");
 	  
 	  advance();
 	  str.remove_prefix(1);
@@ -825,7 +837,7 @@ struct RegexParserNode
       case(CHAR):
 	::printf("[%d - %d) = {",begChar,endChar);
 	for(char b=begChar;b<endChar;b++)
-	  if(std::isalnum(b))
+	  if(std::isprint(b))
 	    ::printf("%c",b);
 	::printf("}\n");
 	break;
@@ -1011,6 +1023,51 @@ struct BaseCharRanges :
   }
 };
 
+/// Describes a range passed by the extrema
+constexpr std::string rangeDescribe(const char b,
+				    const char e)
+{
+  std::string res;
+  auto printChar=
+    [&res](const char c)
+    {
+      if(c>=32 and c<127)
+	res+=c;
+      else
+	{
+	  res+="\\";
+	  for(char t=c,m=100;m;m/=10)
+	    {
+	      res+=(char)((t/m)+48);
+	      t%=m;
+	    }
+	}
+    };
+  
+  if(e==b+1)
+    {
+      res="'";
+      printChar(b);
+      res+="'";
+    }
+  else
+    {
+      res="[";
+      printChar(b);
+      res+=";";
+      printChar(e);
+      res+=")";
+    }
+  
+  return res;
+}
+
+/// Describes a range
+constexpr std::string rangeDescribe(const std::pair<char,char>& r)
+{
+  return rangeDescribe(r.first,r.second);
+}
+
 /// Range of chars where consecutive ranges are not merged
 struct UnmergedCharRanges :
   BaseCharRanges<UnmergedCharRanges>
@@ -1062,9 +1119,9 @@ struct UnmergedCharRanges :
     if(cur==ranges.end() or cur->first!=e)
       ranges.insert(cur,{e,startNewRange});
     
-    diagnostic("  new range after inserting [",b,";",e,"): \n");
-    for(const auto& [b,e] : ranges)
-      diagnostic("    r: [",b,";",e,")\n");
+    diagnostic("  new range after inserting ",rangeDescribe(b,e),": \n");
+    for(const auto& [d,isBeg] : ranges)
+      diagnostic("    r: ",d," begins: ",(isBeg?"True":"False"),")\n");
     diagnostic("\n");
   }
   
@@ -1072,8 +1129,8 @@ struct UnmergedCharRanges :
   template <typename F>
   constexpr void onAllRanges(const F& f) const
   {
-    for(const auto& [b,e] : ranges)
-      diagnostic("    r: [",b,";",e,")\n");
+    for(const auto& [d,isBeg] : ranges)
+      diagnostic("    r: ",d," begins: ",(isBeg?"True":"False"),"\n");
     
     for(size_t iRangeBeg=0;iRangeBeg+1<ranges.size();iRangeBeg++)
       {
@@ -1130,10 +1187,11 @@ struct MergedCharRanges :
     
     diagnostic("range:\n");
     for(const auto& [b,e] : ranges)
-      diagnostic(" [",b,";",e,")\n");
+      diagnostic(" ",rangeDescribe(b,e),"\n");
+    
     diagnostic("negated range:\n");
     for(const auto& [b,e] : negatedRanges)
-      diagnostic(" [",b,";",e,")\n");
+      diagnostic(" ",rangeDescribe(b,e),"\n");
     
     // Replaces the range with the negated one
     ranges=
@@ -1147,7 +1205,7 @@ struct MergedCharRanges :
     const auto& [b,e]=
       head;
     
-    diagnostic("Considering [",b,";",e,")\n");
+    diagnostic("Inserting ",rangeDescribe(head),"\n");
     
     /// Current range, at the beginning set at the first range delimiter
     auto cur=
@@ -1156,6 +1214,22 @@ struct MergedCharRanges :
     // Find where to insert the range
     while(cur!=ranges.end() and cur->second<b)
       cur++;
+    if(ranges.size())
+      {
+	diagnostic("Skipping all ranges until finding one which ends after the beginning of that to be inserted\n");
+	while(cur!=ranges.end() and cur->second<b)
+	  {
+	    diagnostic("  Skipping ",rangeDescribe(*cur),"\n");
+	    cur++;
+	  }
+	
+	if(cur==ranges.end())
+	  diagnostic("All existing ranges skipped\n");
+	else
+	  diagnostic("Range ",rangeDescribe(*cur)," ends at ",cur->second," which is after ",b,"\n");
+      }
+    else
+      diagnostic("No range present so far, will insert as a first range\n");
     
     /// Index of the position where to insert, useful for debug
     const size_t i=
@@ -1164,28 +1238,29 @@ struct MergedCharRanges :
     // Insert the beginning of the range if not present
     if(cur==ranges.end() or cur->second<b)
       {
-	diagnostic("Inserting [",b,";",e,") at ",i,"\n");
-	ranges.insert(cur,{b,e});
+	diagnostic("Inserting ",rangeDescribe(head)," at ",i,"\n");
+	ranges.insert(cur,head);
       }
     else
       {
 	if(cur->first>b)
 	  {
-	    diagnostic("range ",i," [",cur->first,",",cur->second,"%d) extended left to ");
+	    const char prev=cur->first;
 	    cur->first=std::min(cur->first,b);
-	    diagnostic("[",cur->first,",",cur->second,")\n");
+	    diagnostic("range ",i," ",rangeDescribe(prev,cur->second)," extended left to ",rangeDescribe(*cur),"\n");
 	  }
 	
 	if(cur->second<e)
 	  {
-	    diagnostic("range ",i,"[",cur->first,",",cur->second,") extended right to ");
+	    const char prev=cur->second;
 	    cur->second=e;
-	    diagnostic("[",cur->first,",",cur->second,")\n");
+	    diagnostic("range ",i," ",rangeDescribe(cur->first,prev)," extended right to ",rangeDescribe(*cur),"\n");
+	    
 	    while(cur+1!=ranges.end() and cur->second>=(cur+1)->first)
 	      {
 		cur->second=std::max(cur->second,(cur+1)->second);
-		diagnostic("extended right to [",cur->first,",",cur->second,")\n");
-		diagnostic("erasing [",(cur+1)->first,",",(cur+1)->second,")\n");
+		diagnostic("extended right to ",rangeDescribe(*cur),"\n");
+		diagnostic("erasing ",rangeDescribe((cur+1)->first,(cur+1)->second),"\n");
 		cur=ranges.erase(cur+1)-1;
 	      }
 	  }
@@ -1210,11 +1285,14 @@ constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
     
   if(matchIn.matchChar('['))
     {
+      diagnostic("matched [, starting to match a bracket expression\n");
+      
       /// Take whether the range is negated
       const bool negated=
 	matchIn.matchChar('^');
-	
-      diagnostic("matched [\n");
+      
+      if(negated)
+	diagnostic("negated range\n");
       
       /// List of matchable chars
       MergedCharRanges matchableChars;
@@ -1485,7 +1563,14 @@ struct RegexMachineTransition
   /// Print the transition
   void printf() const
   {
-    ::printf(" stateFrom: %zu, [%c-%c), dState: %zu\n",iDStateFrom,beg,end,nextDState);
+    ::printf(" stateFrom: %zu, ",iDStateFrom);
+    
+    if(end==beg+1)
+      ::printf("%c",beg);
+    else
+      ::printf("[%c-%c)",beg,end);
+    
+    ::printf(", dState: %zu\n",nextDState);
   }
 };
 
@@ -1543,14 +1628,14 @@ struct BaseRegexParser :
 	diagnostic("First transition: ",self().dStates[dState].transitionsBegin,"\n");
 	while(trans!=self().transitions.end() and trans->iDStateFrom==dState and not((trans->beg<=c and trans->end>c)))
 	  {
-	    diagnostic("Ignored transition [",trans->beg,",",trans->end,")\n");
+	    diagnostic("Ignored transition ",rangeDescribe(trans->beg,trans->end),"\n");
 	    trans++;
 	  }
 	
 	if(trans!=self().transitions.end() and trans->iDStateFrom==dState)
 	  {
 	    dState=trans->nextDState;
-	    diagnostic("matched ",c," with trans ",trans->iDStateFrom," [",trans->beg,",",trans->end,"), going to dState ",dState,"\n");
+	    diagnostic("matched ",c," with trans ",trans->iDStateFrom," ",rangeDescribe(trans->beg,trans->end),", going to dState ",dState,"\n");
 	    v.remove_prefix(1);
 	  }
 	else
@@ -1663,7 +1748,7 @@ struct DynamicRegexParser :
 	  while(iNextDState<dStateLabels.size() and dStateDiffers(dStateLabels[iNextDState],nextDState))
 	    iNextDState++;
 	  
-	  diagnostic(" range [",b,",",e,") goes to state {");
+	  diagnostic(" range ",rangeDescribe(b,e)," goes to state {");
 	  for(size_t i=0;const auto& n : nextDState)
 	    diagnostic((i++==0)?"":",",n->nodeId);
 	  diagnostic("}, ",iNextDState,"\n");
@@ -3524,10 +3609,7 @@ struct ConstexprGrammar :
 			     });
     
     for(size_t iItem=0;iItem<Specs.nItems;iItem++)
-      {
-	this->items[iItem].iProduction=oth.items[iItem].iProduction;
-	this->items[iItem].position=oth.items[iItem].position;
-      }
+      this->items[iItem]=oth.items[iItem];
     
     stateIItemsData.fillWith([&oth](const size_t& iState)->const std::vector<size_t>&{return oth.stateItems[iState].iItems;});
     
