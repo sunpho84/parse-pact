@@ -3,7 +3,6 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
-#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <numeric>
@@ -112,6 +111,21 @@ constexpr auto reduce(const std::vector<T>& v,
     }
   else
     return {};
+}
+
+/// Returns the total number of elements of a vector of vectors
+template <typename T>
+constexpr size_t vectorOfVectorsTotalEntries(const std::vector<std::vector<T>>& v)
+{
+  return reduce(v,
+		[](const std::vector<T>& s,
+		   const std::optional<size_t>& x=std::nullopt)
+		{
+		  if(x)
+		    return *x+s.size();
+		  else
+		    return (size_t)0;
+		});
 }
 
 /// Constant type T if B is true, non const otherwise
@@ -772,7 +786,7 @@ struct RegexParserNode
   size_t tokId;
   
   /// Id of the node
-  size_t id;
+  size_t nodeId;
   
   /// Determine if the node is nullable
   bool nullable;
@@ -796,14 +810,14 @@ struct RegexParserNode
       ind[i]=' ';
     
     ind[indLv]='\0';
-    ::printf("%s %s, id: %zu, ",ind,typeSpecs[type].tag,id);
+    ::printf("%s %s, id: %zu, ",ind,typeSpecs[type].tag,nodeId);
     if(nullable)
       ::printf("nullable ");
     for(const auto& [tag,vec] : {std::make_pair("firsts",firsts),{"lasts",lasts},{"follows",follows}})
       {
 	::printf("%s: {",tag);
 	for(size_t i=0;const auto& v : vec)
-	  ::printf("%s%zu",(i++==0)?"":",",v->id);
+	  ::printf("%s%zu",(i++==0)?"":",",v->nodeId);
 	::printf("}, ");
       }
     switch(type)
@@ -834,7 +848,7 @@ struct RegexParserNode
     for(auto& subNode : subNodes)
       subNode.setRecursivelyId(id);
     
-    this->id=id++;
+    this->nodeId=id++;
   }
   
   /// Sets the id of all the nodes
@@ -945,7 +959,7 @@ struct RegexParserNode
     begChar(begChar),
     endChar(endChar),
     tokId(tokId),
-    id{0},
+    nodeId{0},
     nullable(false)
   {
   }
@@ -1390,31 +1404,67 @@ constexpr std::optional<RegexParserNode> matchAndParsePossiblyOrredExpr(Matching
   return lhs;
 }
 
+struct RegexToken
+{
+  std::string_view str;
+  
+  size_t iSymbol;
+};
+
 /// Gets the parse tree from a list of regex
-template <size_t ITok=0,
-	  typename...Tail>
-requires(std::is_same_v<char,Tail> and ...)
-constexpr std::optional<RegexParserNode> parseTreeFromRegex(const char* headRE,
-							    const Tail*...tailRE)
+constexpr std::optional<RegexParserNode> parseTreeFromRegex(const std::vector<RegexToken>& regexTokens,
+							    const size_t pos=0)
 {
   using enum RegexParserNode::Type;
   
-  if(Matching match(headRE);std::optional<RegexParserNode> t=matchAndParsePossiblyOrredExpr(match))
-    if(t and match.ref.empty())
-      {
-	/// Result, to be returned if last to be matched
-	RegexParserNode res(AND,{std::move(*t),{TOKEN,{},'\0','\0',ITok}});
-	
-	if constexpr(sizeof...(tailRE))
-	  if(std::optional<RegexParserNode> n=parseTreeFromRegex<ITok+1>(tailRE...))
-	    return RegexParserNode(OR,{std::move(res),std::move(*n)});
+  if(pos<regexTokens.size())
+    if(Matching match(regexTokens[pos].str);std::optional<RegexParserNode> t=matchAndParsePossiblyOrredExpr(match))
+      if(t and match.ref.empty())
+	{
+	  /// Result, to be returned if last to be matched
+	  RegexParserNode res(AND,{std::move(*t),{TOKEN,{},'\0','\0',regexTokens[pos].iSymbol}});
+	  
+	  if(pos+1<regexTokens.size())
+	    if(std::optional<RegexParserNode> n=parseTreeFromRegex(regexTokens,pos+1))
+	      return RegexParserNode(OR,{std::move(res),std::move(*n)});
+	    else
+	      return {};
 	  else
-	    return {};
-	else
-	  return res;
-      }
+	    return res;
+	}
   
   return {};
+}
+
+/// Gets the parse tree from a list of regex
+constexpr std::optional<RegexParserNode> parseTreeFromRegex2(const std::vector<RegexToken>& regexTokens)
+{
+  using enum RegexParserNode::Type;
+  
+  bool error=false;
+  std::optional<RegexParserNode> res;
+  
+  for(size_t pos=0;pos<regexTokens.size() and not error;pos++)
+    {
+      Matching match(regexTokens[pos].str);
+      
+      if(std::optional<RegexParserNode> t=matchAndParsePossiblyOrredExpr(match);t and match.ref.empty())
+	{
+	  RegexParserNode tmp(AND,{std::move(*t),{TOKEN,{},'\0','\0',regexTokens[pos].iSymbol}});
+	  
+	  if(res)
+	    res=RegexParserNode(OR,{std::move(*res),std::move(tmp)});
+	  else
+	    res=tmp;
+	}
+      else
+	error=true;
+    }
+  
+  if(error)
+    return {};
+  else
+    return res;
 }
 
 /// Transition in the state machine for the regex parsing
@@ -1459,12 +1509,12 @@ struct RegexMachineSpecs
   const size_t nDStates;
   
   /// Number of transitions
-  const size_t nTranstitions;
+  const size_t nTransitions;
   
   /// Detects if the machine is empty
   constexpr bool isNull() const
   {
-    return nDStates==0 and nTranstitions==0;
+    return nDStates==0 and nTransitions==0;
   }
 };
 
@@ -1524,8 +1574,19 @@ struct DynamicRegexParser :
   /// Transitions among the states of the DFA
   std::vector<RegexMachineTransition> transitions;
   
+  /// Default constructor
+  constexpr DynamicRegexParser()
+  {
+  }
+  
   /// Construct from parse tree
   constexpr DynamicRegexParser(RegexParserNode& parseTree)
+  {
+    createFromParseTree(parseTree);
+  }
+  
+  /// Create from parse tree
+  constexpr void createFromParseTree(RegexParserNode& parseTree)
   {
     parseTree.setAllIds();
     parseTree.setNullable();
@@ -1560,7 +1621,7 @@ struct DynamicRegexParser :
 	
 	diagnostic("dState: {");
 	for(size_t i=0;const auto& n : dStateLabels[iDState])
-	  diagnostic((i++==0)?"":",",n->id);
+	  diagnostic((i++==0)?"":",",n->nodeId);
 	diagnostic("}\n");
 	
 	// Loop on all ranges to determine to which dState it points,
@@ -1578,12 +1639,12 @@ struct DynamicRegexParser :
 	      nextDState.insert(nextDState.end(),f->follows.begin(),f->follows.end());
 	  
 	  /// List of the recognized tokens
-	  std::vector<int> recogTokens;
+	  std::vector<size_t> recogTokens;
 	  for(const auto& f : dStateLabels[iDState])
 	    if(f->type==RegexParserNode::TOKEN)
 	      recogTokens.push_back(f->tokId);
 	  
-	    /// Check if two dStates differ, for some reason the std::vector comparison is not working with clang
+	  /// Check if two dStates differ, for some reason the std::vector comparison is not working with clang
 	  constexpr auto dStateDiffers=
 		      [](const auto& a,
 			 const auto& b)
@@ -1604,7 +1665,7 @@ struct DynamicRegexParser :
 	  
 	  diagnostic(" range [",b,",",e,") goes to state {");
 	  for(size_t i=0;const auto& n : nextDState)
-	    diagnostic((i++==0)?"":",",n->id);
+	    diagnostic((i++==0)?"":",",n->nodeId);
 	  diagnostic("}, ",iNextDState,"\n");
 	  
 	  // Creates the next dState label if not existing
@@ -1659,7 +1720,7 @@ struct DynamicRegexParser :
 	{
 	  printf("dState %zu {",iDState);
 	  for(size_t i=0;const auto& n : dStateLabels[iDState])
-	    printf("%s%zu",(i++==0)?"":",",n->id);
+	    printf("%s%zu",(i++==0)?"":",",n->nodeId);
 	  printf("} has the following transitions which start at %zu: \n",dStates[iDState].transitionsBegin);
 	  
 	  for(size_t iTransition=dStates[iDState].transitionsBegin;iTransition<transitions.size() and transitions[iTransition].iDStateFrom==iDState;iTransition++)
@@ -1673,7 +1734,7 @@ struct DynamicRegexParser :
   /// Gets the parameters needed to build the constexpr parser
   constexpr RegexMachineSpecs getSizes() const
   {
-    return {.nDStates=dStates.size(),.nTranstitions=transitions.size()};
+    return {.nDStates=dStates.size(),.nTransitions=transitions.size()};
   }
 };
 
@@ -1686,27 +1747,31 @@ struct ConstexprRegexParser :
   std::array<DState,Specs.nDStates> dStates;
   
   /// Transitions among states
-  std::array<RegexMachineTransition,Specs.nTranstitions> transitions;
+  std::array<RegexMachineTransition,Specs.nTransitions> transitions;
   
   /// Create from dynamic-sized parser
   constexpr ConstexprRegexParser(const DynamicRegexParser& oth)
   {
     for(size_t i=0;i<Specs.nDStates;i++)
       this->dStates[i]=oth.dStates[i];
-    for(size_t i=0;i<Specs.nTranstitions;i++)
+    
+    for(size_t i=0;i<Specs.nTransitions;i++)
       this->transitions[i]=oth.transitions[i];
+  }
+  
+  /// Default constructor
+  constexpr ConstexprRegexParser()
+  {
   }
 };
 
 /// Create parser from regexp
-template <RegexMachineSpecs RPS=RegexMachineSpecs{},
-	  typename...T>
-requires(std::is_same_v<char,T> and ...)
-constexpr auto createParserFromRegex(const T*...str)
+template <RegexMachineSpecs RPS=RegexMachineSpecs{}>
+constexpr auto createParserFromRegex(const std::vector<RegexToken>& tokens)
 {
   /// Creates the parse tree
   std::optional<RegexParserNode> parseTree=
-    parseTreeFromRegex(str...);
+    parseTreeFromRegex(tokens);
   
   if(not parseTree)
     errorEmitter("Unable to parse the regex");
@@ -1717,18 +1782,46 @@ constexpr auto createParserFromRegex(const T*...str)
     return ConstexprRegexParser<RPS>(*parseTree);
 }
 
+/// Prepare a vector with tokens id startign from a variadic list
+template <typename...T>
+requires(std::is_same_v<char,T> and ...)
+constexpr std::vector<RegexToken> createRegexTokensFromStringList(const T*...str)
+{
+  std::vector<RegexToken> regexTokens;
+  
+  for(size_t i=0;const char* const& s : {str...})
+    regexTokens.emplace_back(s,i++);
+  
+  return regexTokens;
+}
+
+/// Create parser from regexp
+template <RegexMachineSpecs RPS=RegexMachineSpecs{},
+  typename...T>
+  requires(std::is_same_v<char,T> and ...)
+  constexpr auto createParserFromRegex(const T*...str)
+{
+  return createParserFromRegex<RPS>(createRegexTokensFromStringList(str...));
+}
+
+/// Estimates the parser size
+constexpr auto estimateRegexParserSize(const std::vector<RegexToken>& regexTokens)
+{
+  return createParserFromRegex(regexTokens).getSizes();
+}
+
 /// Estimates the parser size
 template <typename...T>
 requires(std::is_same_v<char,T> and ...)
 constexpr auto estimateRegexParserSize(const T*...str)
 {
-  return createParserFromRegex(str...).getSizes();
+  return estimateRegexParserSize(createRegexTokensFromStringList(str...));
 }
 
 /////////////////////////////////////////////////////////////////
 
-/// A symbol of a grammar
-struct GrammarSymbol
+/// A symbol of a grammar, basic information
+struct BaseGrammarSymbol
 {
   /// View on the string defining the symbol
   std::string_view name;
@@ -1736,9 +1829,34 @@ struct GrammarSymbol
   /// Possible types of a symbol
   enum class Type{NULL_SYMBOL,TERMINAL_SYMBOL,NON_TERMINAL_SYMBOL,END_SYMBOL};
   
+  /// Returns the tag associated to the type
+  constexpr std::string_view typeTag() const
+  {
+    switch(type)
+      {
+    case Type::NULL_SYMBOL:
+      return "NULL";
+      break;
+    case Type::TERMINAL_SYMBOL:
+      return "TERMINAL";
+      break;
+    case Type::NON_TERMINAL_SYMBOL:
+      return "NON_TERMINAL";
+      break;
+    case Type::END_SYMBOL:
+      return "END";
+      break;
+    }
+  }
+  
   //// Type of this symbol
   Type type;
-  
+};
+
+/// A symbol of a grammar, comprehensive information
+struct GrammarSymbol :
+  BaseGrammarSymbol
+{
   /// Possible associativities of a symbol
   enum class Associativity{NONE,LEFT,RIGHT};
   
@@ -1769,8 +1887,7 @@ struct GrammarSymbol
   /// Construct the symbol
   constexpr GrammarSymbol(const std::string_view& name,
 			  const Type& type) :
-    name(name),
-    type(type),
+    BaseGrammarSymbol{name,type},
     associativity(Associativity::NONE),
     precedence(0),
     referredAsPrecedenceSymbol(false),
@@ -1780,9 +1897,6 @@ struct GrammarSymbol
   
   /// Default constructor
   constexpr GrammarSymbol()=default;
-  
-  /// Threeway comparison
-  bool operator<=>(const GrammarSymbol& oth) const = default;
 };
 
 /// A production rule of a grammar
@@ -2023,9 +2137,9 @@ struct GrammarTransition
   
   /// Gets a reduction transition
   static constexpr GrammarTransition getReduce(const size_t iSymbol,
-					       const size_t iProd)
+					       const size_t iProduction)
   {
-    return {.iSymbol=iSymbol,.iStateOrProduction=iProd,.type=REDUCE};
+    return {.iSymbol=iSymbol,.iStateOrProduction=iProduction,.type=REDUCE};
   }
   
   /// Threeway comparison
@@ -2048,13 +2162,6 @@ struct Lookahead
   }
 };
 
-struct RegexToken
-{
-  std::string_view str;
-  
-  size_t iSymbol;
-};
-
 /// Specifications of the grammar
 struct GrammarSpecs
 {
@@ -2065,12 +2172,22 @@ struct GrammarSpecs
   
   const size_t nItems;
   
-  const Stack2DVectorPars statePars;
+  const Stack2DVectorPars stateItemsPars;
+  
+  const Stack2DVectorPars stateTransitionsPars;
+  
+  const RegexMachineSpecs regexMachinePars;
   
   /// Detects if the grammar is empty
   constexpr bool isNull() const
   {
-    return nSymbols==0 and productionPars.isNull() and nItems==0 and statePars.isNull();
+    return
+      nSymbols==0 and
+      productionPars.isNull() and
+      nItems==0 and
+      stateItemsPars.isNull() and
+      stateTransitionsPars.isNull() and
+      regexMachinePars.isNull();
   }
 };
 
@@ -2106,11 +2223,13 @@ struct Grammar
   
   std::vector<GrammarItem> items;
   
-  std::vector<GrammarState> states;
+  std::vector<GrammarState> stateItems;
   
-  std::vector<std::vector<GrammarTransition>> grammarTransitionsPerState;
+  std::vector<std::vector<GrammarTransition>> stateTransitions;
   
   std::vector<Lookahead> lookaheads;
+  
+  DynamicRegexParser regexParser;
   
   /// Describes a production
   constexpr inline std::string describe(const GrammarProduction& production) const
@@ -2134,7 +2253,7 @@ struct Grammar
   /// Describes a transition
   constexpr inline std::string describe(const GrammarTransition& transition) const
   {
-    return transition.describe(items,productions,symbols,states);
+    return transition.describe(items,productions,symbols,stateItems);
   }
   
   /// Finds or insert a symbol
@@ -2788,13 +2907,13 @@ struct Grammar
   {
     diagnostic("-----------------------------------\n");
     
-    states.emplace_back(std::vector<size_t>{0});
-    grammarTransitionsPerState.resize(1);
+    stateItems.emplace_back(std::vector<size_t>{0});
+    stateTransitions.resize(1);
     
     items.emplace_back(symbols[iStartSymbol].iProductions.front(),0);
     
     const size_t iStartState=0;
-    states[iStartState].addClosure(items,productions,symbols);
+    stateItems[iStartState].addClosure(items,productions,symbols);
     
     diagnostic("Start state first production: ",describe(productions[symbols[iStartSymbol].iProductions.front()]),"\n");
     
@@ -2805,37 +2924,37 @@ struct Grammar
 	for(const size_t& iState : iStates)
 	  for(size_t iSymbol=0;iSymbol<symbols.size();iSymbol++)
 	    if(iSymbol!=iEndSymbol)
-	      if(const GrammarState gotoState=states[iState].createGotoState(iSymbol,items,productions,symbols);gotoState.iItems.size())
+	      if(const GrammarState gotoState=stateItems[iState].createGotoState(iSymbol,items,productions,symbols);gotoState.iItems.size())
 		{
 		  /// Search the goto state in the list of states
-		  const auto [inserted,iGotoState]=maybeAddToUniqueVector(states,gotoState);
+		  const auto [inserted,iGotoState]=maybeAddToUniqueVector(stateItems,gotoState);
 		  
 		  if(inserted)
 		    {
 		      iNextStates.push_back(iGotoState);
-		      grammarTransitionsPerState.emplace_back();
+		      stateTransitions.emplace_back();
 		    }
 		  
-		  grammarTransitionsPerState[iState].emplace_back(iSymbol,iGotoState);
-		  diagnostic("Emplaced in state:\n",describe(states[iState]));
-		  diagnostic(" the transition mediated by symbol \"",symbols[iSymbol].name,"\" to state\n",describe(states[iGotoState]),"\n");
+		  stateTransitions[iState].emplace_back(iSymbol,iGotoState);
+		  diagnostic("Emplaced in state:\n",describe(stateItems[iState]));
+		  diagnostic(" the transition mediated by symbol \"",symbols[iSymbol].name,"\" to state\n",describe(stateItems[iGotoState]),"\n");
 		  
 		}
       }
     
-    for(size_t iState=0;iState<states.size();iState++)
+    for(size_t iState=0;iState<stateItems.size();iState++)
       {
 	diagnostic("--\n");
 	
-	diagnostic("State:\n",describe(states[iState]));
-	diagnostic("has ",grammarTransitionsPerState[iState].size()," transitions:\n");
+	diagnostic("State:\n",describe(stateItems[iState]));
+	diagnostic("has ",stateTransitions[iState].size()," transitions:\n");
 	
-	if(grammarTransitionsPerState[iState].size())
-	  for(const GrammarTransition& t : grammarTransitionsPerState[iState])
+	if(stateTransitions[iState].size())
+	  for(const GrammarTransition& t : stateTransitions[iState])
 	    diagnostic(describe(t));
       }
     
-    for(auto& s : states)
+    for(auto& s : stateItems)
       s.addClosure(items,productions,symbols);
   }
   
@@ -2848,7 +2967,7 @@ struct Grammar
     diagnostic("Building the lookaheds for ",symbols.size()," symbols, read from lookaheads: ",lookaheads.front().symbolIs.n," nchars: ",lookaheads.front().symbolIs.data.size(),"\n");
     lookaheads[0].symbolIs.set(iEndSymbol,1);
     
-    for(const GrammarState& state : states)
+    for(const GrammarState& state : stateItems)
       for(const size_t iItem : state.iItems)
 	{
 	  const GrammarItem& item=items[iItem];
@@ -2912,19 +3031,19 @@ struct Grammar
   {
     diagnostic("-----------------------------------\n");
     
-    for(size_t iState=0;iState<states.size();iState++)
+    for(size_t iState=0;iState<stateItems.size();iState++)
       {
-	for(const GrammarTransition& transition : grammarTransitionsPerState[iState])
-	  for(const size_t& iItem : states[iState].iItems)
+	for(const GrammarTransition& transition : stateTransitions[iState])
+	  for(const size_t& iItem : stateItems[iState].iItems)
 	    {
 	      const GrammarItem& item=items[iItem];
 	      // const GrammarSymbol& symbol=symbols[transition.iSymbol];
 	      const GrammarProduction& production=productions[item.iProduction];
 	      if(production.iRhsList.size() and production.iRhsList[item.position]==transition.iSymbol)
-		maybeAddToUniqueVector(lookaheads[iItem].iPropagateToItems,*states[transition.iStateOrProduction].findItem(items,{item.iProduction,item.position+1}));
+		maybeAddToUniqueVector(lookaheads[iItem].iPropagateToItems,*stateItems[transition.iStateOrProduction].findItem(items,{item.iProduction,item.position+1}));
 	    }
 	
-	for(const size_t& iItem : states[iState].iItems)
+	for(const size_t& iItem : stateItems[iState].iItems)
 	  {
 	    const GrammarItem& item=items[iItem];
 	    const GrammarProduction& production=productions[item.iProduction];
@@ -2933,7 +3052,7 @@ struct Grammar
 	       position<production.iRhsList.size() and production.isNullableAfter(symbols,position+1))
 	      for(const size_t& iOtherProduction : symbols[production.iRhsList[position]].iProductions)
 		{
-		  if(const std::optional<size_t> maybeIGotoItem=states[iState].findItem(items,{iOtherProduction,0}))
+		  if(const std::optional<size_t> maybeIGotoItem=stateItems[iState].findItem(items,{iOtherProduction,0}))
 		    maybeAddToUniqueVector(lookaheads[iItem].iPropagateToItems,*maybeIGotoItem);
 		}
 	  }
@@ -3068,15 +3187,15 @@ struct Grammar
   {
     diagnostic("-----------------------------------\n");
     
-    for(size_t iState=0;iState<states.size();iState++)
+    for(size_t iState=0;iState<stateItems.size();iState++)
       {
 	bool stateDescribed=0;
-	GrammarState& state=states[iState];
+	GrammarState& state=stateItems[iState];
 	
-	for(size_t iIItem=0;iIItem<states[iState].iItems.size();iIItem++)
+	for(size_t iIItem=0;iIItem<stateItems[iState].iItems.size();iIItem++)
 	  {
 	    bool itemDescribed=0;
-	    const size_t iItem=states[iState].iItems[iIItem];
+	    const size_t iItem=stateItems[iState].iItems[iIItem];
 	    const GrammarItem& item=items[iItem];
 	    const size_t& iProduction=item.iProduction;
 	    const GrammarProduction& production=productions[iProduction];
@@ -3104,7 +3223,7 @@ struct Grammar
 		      
 		      /// Position of the transition in the state
 		      size_t iTransition=0;
-		      std::vector<GrammarTransition>& transitions=grammarTransitionsPerState[iState];
+		      std::vector<GrammarTransition>& transitions=stateTransitions[iState];
 		      while(iTransition<transitions.size() and transitions[iTransition].iSymbol!=iSymbol)
 			iTransition++;
 		      
@@ -3125,6 +3244,22 @@ struct Grammar
       }
   }
   
+  /// Generate the regex parser
+  constexpr void generateRegexParser()
+  {
+    std::vector<RegexToken> tokens;
+    
+    for(size_t iSymbol=0;iSymbol<symbols.size();iSymbol++)
+      if(symbols[iSymbol].type==GrammarSymbol::Type::TERMINAL_SYMBOL)
+	tokens.emplace_back(symbols[iSymbol].name,iSymbol);
+    
+    diagnostic("List of TERMINAL regex recognized by the grammar:\n");
+    for(const auto& [name,iToken] : tokens)
+      diagnostic("   ",name," -> ",iToken,"\n");
+    
+    regexParser=createParserFromRegex(tokens);
+  }
+  
   constexpr Grammar(const std::string_view& str) :
     currentPrecedence(0)
   {
@@ -3143,6 +3278,8 @@ struct Grammar
     generateGotoItems();
     propagateLookaheads();
     generateTransitions();
+    
+    generateRegexParser();
   }
   
   /// Gets the parameters needed to build the constexpr grammar
@@ -3161,16 +3298,19 @@ struct Grammar
 					}),
 	 .nRows=productions.size()},
        .nItems=items.size(),
-       .statePars{.nEntries=reduce(states,
-				   [](const GrammarState& s,
-				      const std::optional<size_t>& x=std::nullopt)
-				   {
-				     if(x)
-				       return *x+s.iItems.size();
-				     else
-				       return (size_t)0;
-				   }),
-	 .nRows=states.size()}};
+       .stateItemsPars{.nEntries=reduce(stateItems,
+					[](const GrammarState& s,
+					   const std::optional<size_t>& x=std::nullopt)
+					{
+					  if(x)
+					    return *x+s.iItems.size();
+					  else
+					    return (size_t)0;
+					}),
+	 .nRows=stateItems.size()},
+       .stateTransitionsPars{.nEntries=vectorOfVectorsTotalEntries(stateTransitions),
+			     .nRows=stateTransitions.size()},
+      .regexMachinePars=regexParser.getSizes()};
   }
 };
 
@@ -3179,27 +3319,32 @@ template <GrammarSpecs Specs>
 struct ConstexprGrammar :
   BaseGrammar<ConstexprGrammar<Specs>>
 {
-  struct Item
-  {
-    size_t iProduction;
-    
-    size_t position;
-  };
-  
-  struct Transition
-  {
-  };
-  
   /// Symbols accepted by the grammar
-  std::array<std::string_view,Specs.nSymbols> symbols;
+  std::array<BaseGrammarSymbol,Specs.nSymbols> symbols;
   
+  /// Index of the symbols representing a production, for each state
   Stack2DVector<size_t,Specs.productionPars> productionsData;
   
-  std::array<Item,Specs.nItems> items;
+  /// Items representing the states, defined in term of index of production and position
+  std::array<GrammarItem,Specs.nItems> items;
   
-  Stack2DVector<size_t,Specs.statePars> statesData;
+  /// Index of the items representing a state, for each state
+  Stack2DVector<size_t,Specs.stateItemsPars> stateIItemsData;
   
-  //std::array<Transition,Specs.nTransitions> transitions;
+  /// Transitions for each state, defined in terms of the symbol, the
+  /// type (shift/reduce), and target state (if shift) or the production to be
+  /// applied (if reduce)
+  Stack2DVector<GrammarTransition,Specs.stateTransitionsPars> stateTransitionsData;
+  
+  ConstexprRegexParser<Specs.regexMachinePars> regexParser;
+  
+  static_assert(Specs.stateTransitionsPars.nRows==Specs.stateItemsPars.nRows,"number of rows for stateTransitions and stateItems do not match");
+  
+  /// Returns the number of states
+  static constexpr size_t nStates()
+  {
+    return Specs.stateTransitionsPars.nRows;
+  }
   
   /// Accessor to a production
   struct ProductionRef
@@ -3231,10 +3376,10 @@ struct ConstexprGrammar :
     /// Describes the production
     constexpr std::string describe() const
     {
-      std::string out=(std::string)g->symbols[iLhs()]+": ";
+      std::string out=(std::string)g->symbols[iLhs()].name+": ";
       
       for(size_t iiRhs=0;iiRhs<nRhs();iiRhs++)
-	out+=(std::string)g->symbols[iRhs(iiRhs)]+" ";
+	out+=(std::string)g->symbols[iRhs(iiRhs)].name+" ";
       
       return out;
     }
@@ -3246,19 +3391,26 @@ struct ConstexprGrammar :
     return {this,iProduction};
   }
   
+  /// Reference to an item
   struct ItemRef
   {
+    /// Underlying grammar
     const ConstexprGrammar* g;
     
+    /// Index of the item
     const size_t iItem;
     
+    /// Describes the item
     constexpr std::string describe()
     {
+      /// Item referred
       const auto& item=g->items[iItem];
       
+      /// Reference toi the production
       const ProductionRef p=g->production(item.iProduction);
       
-      std::string out=(std::string)g->symbols[p.iLhs()]+": ";
+      /// Resulting string
+      std::string out=(std::string)g->symbols[p.iLhs()].name+": ";
       
       for(size_t iIRhs=0,max=p.nRhs();iIRhs<=max;iIRhs++)
 	{
@@ -3268,7 +3420,7 @@ struct ConstexprGrammar :
 	  if(iIRhs<max)
 	    {
 	      out+=" ";
-	      out+=g->symbols[p.iRhs(iIRhs)];
+	      out+=g->symbols[p.iRhs(iIRhs)].name;
 	  }
       }
       
@@ -3276,38 +3428,72 @@ struct ConstexprGrammar :
     }
   };
   
+  /// Gets a reference to the iItem item of the grammar
   constexpr ItemRef item(const size_t& iItem) const
   {
     return {this,iItem};
   }
   
+  /// Reference to a state
   struct StateRef
   {
+    /// Underlying grammar
     const ConstexprGrammar* g;
     
+    /// Index of the state
     const size_t iState;
     
+    /// Gets the number of item
     constexpr const size_t nItems() const
     {
-      return g->statesData.rowSize(iState);
+      return g->stateIItemsData.rowSize(iState);
     }
     
+    /// Returns the index of the iiItem-th item
     constexpr const size_t& iItem(const size_t& iiItem) const
     {
-      return g->statesData(iState,iiItem);
+      return g->stateIItemsData(iState,iiItem);
     }
     
-    constexpr ItemRef item(const size_t& _iItem) const
+    /// Returns a reference to the iiItem-th item
+    constexpr ItemRef item(const size_t& iiItem) const
     {
-      return g->item(iItem(_iItem));
+      return g->item(iItem(iiItem));
     }
     
+    /// Gets the number of item
+    constexpr const size_t nTransitions() const
+    {
+      return g->stateTransitionsData.rowSize(iState);
+    }
+    
+    /// Returns a reference to the iTransition-th transition
+    constexpr const GrammarTransition& transition(const size_t& iTransition) const
+    {
+      return g->stateTransitionsData(iState,iTransition);
+    }
+    
+    /// Describes the state
     constexpr std::string describe(const std::string& pref="") const
     {
+      /// Returned string
       std::string out;
       
       for(size_t iiItem=0;iiItem<nItems();iiItem++)
 	out+=pref+"| "+item(iiItem).describe()+"\n";
+      
+      out+=pref+"\n"+pref+"accepting:\n";
+      
+      for(size_t iTransition=0;iTransition<nTransitions();iTransition++)
+	{
+	  const GrammarTransition& t=transition(iTransition);
+	  out+=pref+"   symbol \""+(std::string)g->symbols[t.iSymbol].name+" ";
+	  if(t.type==GrammarTransition::Type::SHIFT)
+	    out+=" SHIFTING to state #";
+	  else
+	    out+=" REDUCING with production #";
+	  out+=std::to_string(t.iStateOrProduction)+"\n";
+	}
       
       return out;
     }
@@ -3323,16 +3509,9 @@ struct ConstexprGrammar :
   constexpr ConstexprGrammar(const Grammar& oth)
   {
     for(size_t iSymbol=0;iSymbol<Specs.nSymbols;iSymbol++)
-      this->symbols[iSymbol]=oth.symbols[iSymbol].name;
+      this->symbols[iSymbol]=(const BaseGrammarSymbol&)oth.symbols[iSymbol];
     
-    for(size_t iItem=0;iItem<Specs.nItems;iItem++)
-      {
-	this->items[iItem].iProduction=oth.items[iItem].iProduction;
-	this->items[iItem].position=oth.items[iItem].position;
-      }
-    
-    productionsData.fillWith(oth.productions.size(),
-			     [&oth](const size_t& iProduction)
+    productionsData.fillWith([&oth](const size_t& iProduction)
 			     {
 			       const GrammarProduction& p=oth.productions[iProduction];
 			       
@@ -3344,7 +3523,17 @@ struct ConstexprGrammar :
 			       return res;
 			     });
     
-    statesData.fillWith(oth.states.size(),[&oth](const size_t& iState)->const std::vector<size_t>&{return oth.states[iState].iItems;});
+    for(size_t iItem=0;iItem<Specs.nItems;iItem++)
+      {
+	this->items[iItem].iProduction=oth.items[iItem].iProduction;
+	this->items[iItem].position=oth.items[iItem].position;
+      }
+    
+    stateIItemsData.fillWith([&oth](const size_t& iState)->const std::vector<size_t>&{return oth.stateItems[iState].iItems;});
+    
+    stateTransitionsData.fillWith([&oth](const size_t& iState)->const std::vector<GrammarTransition>&{return oth.stateTransitions[iState];});
+    
+    regexParser=oth.regexParser;
   }
 };
 
