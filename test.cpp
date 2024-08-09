@@ -43,7 +43,7 @@ int main(int narg,char** arg)
 {
   test();
   // Matching m("/* *ciao  d* \n mondo */    // come va \n qui { %left bene");
-
+  
   static constexpr char jsonGrammar[]=
   "json {\
      %whitespace \"[ \\t\\r\\n]*\";\
@@ -94,12 +94,13 @@ int main(int narg,char** arg)
   diagnostic("\n");
   
   constexpr auto specs=estimateGrammarSize(xmlGrammar);
+  
   constexpr auto stackGrammar=createGrammar<specs>(xmlGrammar);
   
   diagnostic("Symbols:\n");
   diagnostic("--------\n");
-  for(size_t i=0;const std::string_view& s : stackGrammar.symbols)
-    diagnostic(i++,": ",s,"\n");
+  for(size_t i=0;const BaseGrammarSymbol& s : stackGrammar.symbols)
+    diagnostic(i++,": ",s.name,"   ",s.typeTag()," symbol\n");
   diagnostic("\n");
   
   diagnostic("Productions:\n");
@@ -116,8 +117,14 @@ int main(int narg,char** arg)
   
   diagnostic("States:\n");
   diagnostic("------\n");
-  for(size_t iState=0;iState<stackGrammar.statesData.size();iState++)
-    diagnostic(std::to_string(iState)+")\n"+stackGrammar.state(iState).describe("   "),"\n");
+  for(size_t iState=0;iState<stackGrammar.nStates();iState++)
+    diagnostic("State ",std::to_string(iState)+")\n"+stackGrammar.state(iState).describe("   "),"\n");
+  diagnostic("\n");
+  
+  diagnostic("Regex machine:\n");
+  diagnostic("------\n");
+  diagnostic("nDStates: ",specs.regexMachinePars.nDStates,"\n");
+  diagnostic("nTransitions: ",specs.regexMachinePars.nTransitions,"\n");
   diagnostic("\n");
 
 //   constexpr GrammarParser<jsonGrammar> jSonGrammarParser;
