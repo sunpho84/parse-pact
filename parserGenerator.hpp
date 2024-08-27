@@ -2222,8 +2222,9 @@ struct GrammarTransition
     
     out+="   \"";
     out+=symbols[iSymbol].name;
+    out+="\" ";
     if(type==SHIFT)
-      out+="\" transits to state: \n"+states[iStateOrProduction].describe(items,productions,symbols,"       ");
+      out+="transits to state: \n"+states[iStateOrProduction].describe(items,productions,symbols,"       ");
     else
       out+="induces a reduce transition using production: "+productions[iStateOrProduction].describe(symbols)+"\n";
     
@@ -3647,3 +3648,12 @@ constexpr GrammarSpecs estimateGrammarSize(const std::string_view& str)
 {
   return createGrammar(str).getSizes();
 }
+
+/// Create grammar from string provider, this way constexprness survives
+constexpr auto createconstexprGrammar(const auto strProvider)
+{
+  constexpr std::string_view str=strProvider();
+  
+  return createGrammar<estimateGrammarSize(str)>(str);
+}
+
