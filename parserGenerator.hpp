@@ -1480,10 +1480,13 @@ constexpr std::optional<RegexParserNode> matchAndParsePossiblyOrredExpr(Matching
   return lhs;
 }
 
+/// Associate the regex to be matched and the index of the symbol to be passed
 struct RegexToken
 {
+  /// Regex to be matched
   std::string_view str;
   
+  /// Index of the recognized symbol
   size_t iSymbol;
 };
 
