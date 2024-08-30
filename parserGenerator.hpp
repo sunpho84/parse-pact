@@ -1512,37 +1512,6 @@ constexpr std::optional<RegexParserNode> parseTreeFromRegex(const std::vector<Re
   return {};
 }
 
-/// Gets the parse tree from a list of regex
-constexpr std::optional<RegexParserNode> parseTreeFromRegex2(const std::vector<RegexToken>& regexTokens)
-{
-  using enum RegexParserNode::Type;
-  
-  bool error=false;
-  std::optional<RegexParserNode> res;
-  
-  for(size_t pos=0;pos<regexTokens.size() and not error;pos++)
-    {
-      Matching match(regexTokens[pos].str);
-      
-      if(std::optional<RegexParserNode> t=matchAndParsePossiblyOrredExpr(match);t and match.ref.empty())
-	{
-	  RegexParserNode tmp(AND,{std::move(*t),{TOKEN,{},'\0','\0',regexTokens[pos].iSymbol}});
-	  
-	  if(res)
-	    res=RegexParserNode(OR,{std::move(*res),std::move(tmp)});
-	  else
-	    res=tmp;
-	}
-      else
-	error=true;
-    }
-  
-  if(error)
-    return {};
-  else
-    return res;
-}
-
 /// Transition in the state machine for the regex parsing
 struct RegexMachineTransition
 {
