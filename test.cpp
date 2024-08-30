@@ -1,4 +1,6 @@
-#include <parserGenerator.hpp>
+#include <parserPact.hpp>
+
+using namespace pp;
 
 constexpr void test()
 {
