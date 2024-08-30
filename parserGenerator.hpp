@@ -1847,7 +1847,7 @@ constexpr auto createParserFromRegex(const std::vector<RegexToken>& tokens)
     return ConstexprRegexParser<RPS>(*parseTree);
 }
 
-/// Prepare a vector with tokens id startign from a variadic list
+/// Prepare a vector with tokens id starting from a variadic list
 template <typename...T>
 requires(std::is_same_v<char,T> and ...)
 constexpr std::vector<RegexToken> createRegexTokensFromStringList(const T*...str)
@@ -3619,8 +3619,8 @@ constexpr GrammarSpecs estimateGrammarSize(const std::string_view& str)
   return createGrammar(str).getSizes();
 }
 
-/// Create grammar from string provider, this way constexprness survives
-constexpr auto createconstexprGrammar(const auto strProvider)
+/// Create grammar from string provider, this way constexprness of the string survives
+constexpr auto createConstexprGrammar(const auto strProvider)
 {
   constexpr std::string_view str=strProvider();
   
