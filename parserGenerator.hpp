@@ -1827,9 +1827,7 @@ struct ConstexprRegexParser :
   }
   
   /// Default constructor
-  constexpr ConstexprRegexParser()
-  {
-  }
+  constexpr ConstexprRegexParser()=default;
 };
 
 /// Create parser from regexp
