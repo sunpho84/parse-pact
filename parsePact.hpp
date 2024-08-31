@@ -248,7 +248,7 @@ namespace pp::internal
 	  std::cout<<"\t";
       pp::internal::diagnostic(std::forward<Args>(args)...);
     }
-  
+    
     /// When destroyed, performs the action unless the action is accepted
     template <typename F>
     struct Action
@@ -358,15 +358,15 @@ namespace pp::internal
   /////////////////////////////////////////////////////////////////
   
   ///Matches a single char condition
-  static constexpr bool charMultiMatches(const char& c,
-					 const char& m)
+  constexpr bool charMultiMatches(const char& c,
+				  const char& m)
   {
     return c==m;
   }
   
   ///Matches either char of a string
-  static constexpr bool charMultiMatches(const char& c,
-					 const char* str)
+  constexpr bool charMultiMatches(const char& c,
+				  const char* str)
   {
     while(*str!='\0')
       if(*(str++)==c)
@@ -376,16 +376,16 @@ namespace pp::internal
   }
   
   /// Matches a range
-  static constexpr bool charMultiMatches(const char& c,
-					 const std::pair<char,char>& range)
+  constexpr bool charMultiMatches(const char& c,
+				  const std::pair<char,char>& range)
   {
     return c>=range.first and c<range.second;
   }
   
   /// Matches either conditions of a tuple
   template <typename...Cond>
-  static constexpr bool charMultiMatches(const char& c,
-					 const std::tuple<Cond...>& conds)
+  constexpr bool charMultiMatches(const char& c,
+				  const std::tuple<Cond...>& conds)
   {
     return std::apply([c](const Cond&...cond)
     {
