@@ -10,13 +10,16 @@
 #include <string_view>
 #include <vector>
 
-namespace pp
+namespace pp::internal
 {
   /// Print to terminal if not evaluated at compile time
+  ///
+  /// Forward declaration
   template <typename...Args>
   constexpr void diagnostic(Args&&...args);
   
-  namespace Temptative
+  /// Namespace for tempative match functionalities
+  namespace temptative
   {
     /// State of an action
     enum State : bool {UNACCEPTED,ACCEPTED};
@@ -69,6 +72,7 @@ namespace pp
 	  nNestedActions--;
       }
       
+      /// Cast to bool, returning the state
       constexpr operator bool() const
       {
 	return (bool)state;
@@ -90,7 +94,7 @@ namespace pp
   {
     if(not std::is_constant_evaluated())
       {
-	for(size_t i=0;i<Temptative::nNestedActions;i++)
+	for(size_t i=0;i<temptative::nNestedActions;i++)
 	  std::cout<<"\t";
 	((std::cout<<args),...);
       }
@@ -453,7 +457,7 @@ namespace pp
     constexpr auto beginTemptativeMatch(const char* descr,
 					const bool acceptedByDefault)
     {
-      return Temptative::Action(descr,
+      return temptative::Action(descr,
 				[back=*this,
 				 this]()
 				{
@@ -3601,6 +3605,11 @@ namespace pp
       regexParser=oth.regexParser;
     }
   };
+}
+
+namespace pp
+{
+  using namespace internal;
   
   /// Create grammar from string
   template <GrammarSpecs GS=GrammarSpecs{}>
