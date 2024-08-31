@@ -100,7 +100,11 @@ namespace pp::internal
       }
   }
   
-  /// Makes a reduction on the basis of the function
+  /// Makes a reduction of the whole vector \f, using the the function \f
+  /// for unary or binary reductions.
+  ///
+  /// N.B: the function takes the reduction as a second argument, as
+  /// it might be optional
   template <typename T,
 	    typename F>
   constexpr auto reduce(const std::vector<T>& v,
@@ -108,10 +112,11 @@ namespace pp::internal
   {
     if(v.size())
       {
+	/// First element
 	auto t=f(v.front());
 	
-	for(const T& vi : v)
-	  t=f(vi,t);
+	for(size_t i=1;i<v.size();i++)
+	  t=f(v[i],t);
 	
 	return t;
       }
@@ -125,12 +130,12 @@ namespace pp::internal
   {
     return reduce(v,
 		  [](const std::vector<T>& s,
-		     const std::optional<size_t>& x=std::nullopt)
+		     std::optional<size_t> x=std::nullopt)
 		  {
-		    if(x)
-		      return *x+s.size();
-		    else
-		      return (size_t)0;
+		    if(not x)
+		      x=0;
+		    
+		    return *x+s.size();
 		  });
   }
   
@@ -3361,23 +3366,23 @@ namespace pp::internal
 	{.nSymbols=symbols.size(),
 	 .productionPars{.nEntries=reduce(productions,
 					  [](const GrammarProduction& p,
-					     const std::optional<size_t>& x=std::nullopt)
+					     std::optional<size_t> x=std::nullopt)
 					  {
-					    if(x)
-					      return *x+p.iRhsList.size()+1;
-					    else
-					      return (size_t)0;
+					    if(not x)
+					      x=0;
+					    
+					    return *x+p.iRhsList.size()+1;
 					  }),
 	   .nRows=productions.size()},
 	 .nItems=items.size(),
 	 .stateItemsPars{.nEntries=reduce(stateItems,
 					  [](const GrammarState& s,
-					     const std::optional<size_t>& x=std::nullopt)
+					     std::optional<size_t> x=std::nullopt)
 					  {
-					    if(x)
-					      return *x+s.iItems.size();
-					    else
-					      return (size_t)0;
+					    if(not x)
+					      x=0;
+					    
+					    return *x+s.iItems.size();
 					  }),
 	   .nRows=stateItems.size()},
 	 .stateTransitionsPars{.nEntries=vectorOfVectorsTotalEntries(stateTransitions),
