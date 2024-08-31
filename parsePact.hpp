@@ -487,10 +487,11 @@ namespace pp::internal
     return c;
   }
   
-  /// Keep track of what matched
-  struct Matching
+  /// Holds string to be matched, provides matching functionalities,
+  /// and holds the matching status
+  struct StringMatcher
   {
-    /// Reference to the string view holding the data
+    /// String view to the data to be matched
     std::string_view ref;
     
     /// Returns an undoer, which rewinds the matcher if not accepted
@@ -507,7 +508,7 @@ namespace pp::internal
     }
     
     /// Construct from a string view
-    constexpr Matching(const std::string_view& in) :
+    constexpr StringMatcher(const std::string_view& in) :
       ref(in)
     {
     }
@@ -646,18 +647,18 @@ namespace pp::internal
       return '\0';
     }
     
-    /// Matches a line of comment beginning with //
+    /// Matches a line of comment beginning with "//"
     constexpr bool matchLineComment()
     {
-      /// Store the end of the line delimiter
-      constexpr std::string_view lineEndIds=
-	std::string_view("\n\r");
-      
       /// Result to be returned
       bool res;
       
       if((res=matchStr("//")))
 	{
+	  /// Chars representing the end of the line delimiter
+	  constexpr std::string_view lineEndIds=
+	    std::string_view("\n\r");
+	  
 	  // diagnostic("matched line comment\n");
 	  
 	  while(not ref.empty() and lineEndIds.find_first_of(ref.front())==lineEndIds.npos)
@@ -796,7 +797,7 @@ namespace pp::internal
     }
     
     /// Forbids default construct
-    Matching()=delete;
+    StringMatcher()=delete;
   };
   
   /// Holds a node in the parse tree for regex
@@ -1028,7 +1029,7 @@ namespace pp::internal
   /// Match two expressions joined by "|"
   ///
   /// Forward declaration
-  constexpr std::optional<RegexParserNode> matchAndParsePossiblyOrredExpr(Matching& matchIn);
+  constexpr std::optional<RegexParserNode> matchAndParsePossiblyOrredExpr(StringMatcher& matchIn);
   
   /// Base char range operations
   template <typename T>
@@ -1321,7 +1322,7 @@ namespace pp::internal
   };
   
   /// Matches a set of chars in []
-  constexpr std::optional<RegexParserNode> matchBracketExpr(Matching& matchIn)
+  constexpr std::optional<RegexParserNode> matchBracketExpr(StringMatcher& matchIn)
   {
     /// Rewinds if not matched
     auto undoer=
@@ -1441,7 +1442,7 @@ namespace pp::internal
   }
   
   /// Matches a subexpression
-  constexpr std::optional<RegexParserNode> matchSubExpr(Matching& matchIn)
+  constexpr std::optional<RegexParserNode> matchSubExpr(StringMatcher& matchIn)
   {
     /// Rewinds if not matched
     auto undoer=
@@ -1461,7 +1462,7 @@ namespace pp::internal
   
   
   /// Matches any char but '\0'
-  constexpr std::optional<RegexParserNode> matchDot(Matching& matchIn)
+  constexpr std::optional<RegexParserNode> matchDot(StringMatcher& matchIn)
   {
     if(matchIn.matchChar('.'))
       return RegexParserNode{RegexParserNode::Type::CHAR,{},1,std::numeric_limits<char>::max()};
@@ -1470,7 +1471,7 @@ namespace pp::internal
   }
   
   /// Match a char including possible escape
-  constexpr std::optional<RegexParserNode> matchAndParsePossiblyEscapedChar(Matching& matchIn)
+  constexpr std::optional<RegexParserNode> matchAndParsePossiblyEscapedChar(StringMatcher& matchIn)
   {
     if(const char c=matchIn.matchPossiblyEscapedCharNotIn("|*+?()"))
       return RegexParserNode{RegexParserNode::Type::CHAR,{},c,(char)(c+1)};
@@ -1479,7 +1480,7 @@ namespace pp::internal
   }
   
   /// Match an expression and possible postfix
-  constexpr std::optional<RegexParserNode> matchAndParseExprWithPossiblePostfix(Matching& matchIn)
+  constexpr std::optional<RegexParserNode> matchAndParseExprWithPossiblePostfix(StringMatcher& matchIn)
   {
     using enum RegexParserNode::Type;
     
@@ -1499,7 +1500,7 @@ namespace pp::internal
   }
   
   /// Match one or two expressions
-  constexpr std::optional<RegexParserNode> matchAndParsePossiblyAndedExpr(Matching& matchIn)
+  constexpr std::optional<RegexParserNode> matchAndParsePossiblyAndedExpr(StringMatcher& matchIn)
   {
     /// First and possible only subexpression
     std::optional<RegexParserNode> lhs=
@@ -1513,7 +1514,7 @@ namespace pp::internal
   }
   
   /// Match one or two expression, the second is optionally matched
-  constexpr std::optional<RegexParserNode> matchAndParsePossiblyOrredExpr(Matching& matchIn)
+  constexpr std::optional<RegexParserNode> matchAndParsePossiblyOrredExpr(StringMatcher& matchIn)
   {
     /// First and possible only subexpression
     std::optional<RegexParserNode> lhs=
@@ -1543,7 +1544,7 @@ namespace pp::internal
     using enum RegexParserNode::Type;
     
     if(pos<regexTokens.size())
-      if(Matching match(regexTokens[pos].str);std::optional<RegexParserNode> t=matchAndParsePossiblyOrredExpr(match))
+      if(StringMatcher match(regexTokens[pos].str);std::optional<RegexParserNode> t=matchAndParsePossiblyOrredExpr(match))
 	if(t and match.ref.empty())
 	  {
 	    /// Result, to be returned if last to be matched
@@ -2388,7 +2389,7 @@ namespace pp::internal
       return std::distance(symbols.begin(),(std::vector<GrammarSymbol>::iterator)s);
     }
     
-    constexpr std::optional<size_t> matchAndParseSymbol(Matching& m)
+    constexpr std::optional<size_t> matchAndParseSymbol(StringMatcher& m)
     {
       m.matchWhiteSpaceOrComments();
       
@@ -2404,7 +2405,7 @@ namespace pp::internal
       return std::nullopt;
     }
     
-    constexpr bool matchAndParseAssociativityStatement(Matching& matchin)
+    constexpr bool matchAndParseAssociativityStatement(StringMatcher& matchin)
     {
       /// Undo if not matching
       auto matchRes=
@@ -2451,7 +2452,7 @@ namespace pp::internal
       return matchRes;
     }
     
-    constexpr bool matchAndParseProductionStatement(Matching& matchin)
+    constexpr bool matchAndParseProductionStatement(StringMatcher& matchin)
     {
       auto matchRes=
 	matchin.beginTemptativeMatch("productionStatement",false);
@@ -2530,7 +2531,7 @@ namespace pp::internal
       return matchRes;
     }
     
-    constexpr bool matchAndParseWhitespaceStatement(Matching& matchin)
+    constexpr bool matchAndParseWhitespaceStatement(StringMatcher& matchin)
     {
       /// Undo if not matching
       auto matchRes=
@@ -2583,7 +2584,7 @@ namespace pp::internal
     constexpr void parseTheGrammar(const std::string_view& str)
     {
       /// Embeds the string into a matcher
-      Matching match(str);
+      StringMatcher match(str);
       
       match.matchWhiteSpaceOrComments();
       
