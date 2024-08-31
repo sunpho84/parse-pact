@@ -12,132 +12,9 @@
 
 namespace pp::internal
 {
-  /// Print to terminal if not evaluated at compile time
-  ///
-  /// Forward declaration
-  template <typename...Args>
-  constexpr void diagnostic(Args&&...args);
-  
-  /// Namespace for tempative match functionalities
-  namespace temptative
-  {
-    /// State of an action
-    enum State : bool {UNACCEPTED,ACCEPTED};
-    
-    /// Store the number of tempatative actions, to properly indent the diagnostic
-    inline size_t nNestedActions=0;
-    
-    /// When destroyed, performs the action unless the action is accepted
-    template <typename F>
-    struct Action
-    {
-      using enum State;
-      
-      /// Action performed at destruction if not accepted
-      F undoer;
-      
-      /// State whether the action is accepted
-      bool state;
-      
-      /// Construct taking a funtion
-      constexpr Action(const char* descr,
-		       F&& undoer,
-		       const bool& constructionState=UNACCEPTED) :
-	undoer(undoer),
-	state(constructionState)
-      {
-	diagnostic("Starting ",descr,"\n");
-	if(not std::is_constant_evaluated())
-	  nNestedActions++;
-      }
-      
-      /// Unaccept the action
-      constexpr void unaccept()
-      {
-	state=UNACCEPTED;
-      }
-      
-      /// Accept the action
-      constexpr void accept()
-      {
-	state=ACCEPTED;
-      }
-      
-      /// Destructor, undoing the action if not accepted
-      constexpr ~Action()
-      {
-	if(state==UNACCEPTED)
-	  undoer();
-	if(not std::is_constant_evaluated())
-	  nNestedActions--;
-      }
-      
-      /// Cast to bool, returning the state
-      constexpr operator bool() const
-      {
-	return (bool)state;
-      }
-    };
-  }
-  
-  /// Emit the error. Can be run only at compile time, so the error will
-  /// be prompted at compile time if invoked in a constexpr
-  inline void errorEmitter(const char* str)
-  {
-    fprintf(stderr,"Error: %s\n",str);
-    exit(1);
-  }
-  
-  /// Print to terminal if not evaluated at compile time
-  template <typename...Args>
-  constexpr void diagnostic(Args&&...args)
-  {
-    if(not std::is_constant_evaluated())
-      {
-	for(size_t i=0;i<temptative::nNestedActions;i++)
-	  std::cout<<"\t";
-	((std::cout<<args),...);
-      }
-  }
-  
-  /// Makes a reduction of the whole vector \f, using the the function \f
-  /// for unary or binary reductions.
-  ///
-  /// N.B: the function takes the reduction as a second argument, as
-  /// it might be optional
-  template <typename T,
-	    typename F>
-  constexpr auto reduce(const std::vector<T>& v,
-			const F& f) -> decltype(f(std::declval<T>()))
-  {
-    if(v.size())
-      {
-	/// First element
-	auto t=f(v.front());
-	
-	for(size_t i=1;i<v.size();i++)
-	  t=f(v[i],t);
-	
-	return t;
-      }
-    else
-      return {};
-  }
-  
-  /// Returns the total number of elements of a vector of vectors
-  template <typename T>
-  constexpr size_t vectorOfVectorsTotalEntries(const std::vector<std::vector<T>>& v)
-  {
-    return reduce(v,
-		  [](const std::vector<T>& s,
-		     std::optional<size_t> x=std::nullopt)
-		  {
-		    if(not x)
-		      x=0;
-		    
-		    return *x+s.size();
-		  });
-  }
+  /////////////////////////////////////////////////////////////////
+  //////////////////////// Metaprogramming ////////////////////////
+  /////////////////////////////////////////////////////////////////
   
   /// Constant type T if B is true, non const otherwise
   template <bool B,
@@ -161,19 +38,9 @@ namespace pp::internal
     }
   };
   
-  /// Possibly adds an element to a unique elements vector
-  template <typename T>
-  constexpr std::pair<bool,size_t> maybeAddToUniqueVector(std::vector<T>& v,
-							  const T& x)
-  {
-    if(auto it=std::find(v.begin(),v.end(),x);it==v.end())
-      {
-	v.push_back(x);
-	return {true,v.size()-1};
-      }
-    else
-      return {false,std::distance(v.begin(),it)};
-  }
+  /////////////////////////////////////////////////////////////////
+  //////// Basic helpful types to hold constexpr data /////////////
+  /////////////////////////////////////////////////////////////////
   
   /////////////////////////////////////////////////////////////////
   
@@ -199,17 +66,38 @@ namespace pp::internal
     {
     }
     
-    /// Set a given bit
-    constexpr void set(const size_t& iEl,
-		       const bool& b) &
+    /// Set a given bit to the passed value
+    constexpr void setTo(const size_t& iEl,
+			 const bool& b) &
     {
-      const size_t i=iEl/8;
-      const char j=iEl%8;
-      char& f=data[i];
-      const char mask=~(char(1)<<j);
-      const char add=char(b)<<j;
+      /// Index of the byte
+      const size_t iByte=iEl/8;
+      
+      /// Index of the bit
+      const char iBit=iEl%8;
+      
+      /// Target data
+      char& f=data[iByte];
+      
+      /// Mask needed to erase the bit
+      const char mask=~(char(1)<<iBit);
+      
+      /// Bit value to be added
+      const char add=char(b)<<iBit;
       
       f=(f&mask)|add;
+    }
+    
+    /// Set an element
+    constexpr void set(const size_t& iEl) &
+    {
+      setTo(iEl,true);
+    }
+    
+    /// Unset an element
+    constexpr void unSet(const size_t& iEl) &
+    {
+      setTo(iEl,false);
     }
     
     /// Access a given bit
@@ -245,8 +133,6 @@ namespace pp::internal
       return r;
     }
   };
-  
-  /////////////////////////////////////////////////////////////////
   
   /// Parameters to hold a vector of vectors of heterogeneous size, on the stack
   struct Stack2DVectorPars
@@ -319,6 +205,155 @@ namespace pp::internal
 	}
     }
   };
+  
+  /////////////////////////////////////////////////////////////////
+  ///////////////////////// Diagnostic ////////////////////////////
+  /////////////////////////////////////////////////////////////////
+  
+  /// Emit the error. Can be run only at compile time, so the error will
+  /// be prompted at compile time if invoked in a constexpr
+  inline void errorEmitter(const char* str)
+  {
+    fprintf(stderr,"Error: %s\n",str);
+    exit(1);
+  }
+  
+  /// Print to terminal if not evaluated at compile time
+  template <typename...Args>
+  constexpr void diagnostic(Args&&...args)
+  {
+    if(not std::is_constant_evaluated())
+      ((std::cout<<args),...);
+  }
+  
+  /////////////////////////////////////////////////////////////////
+  //////////////////// String matching ////////////////////////////
+  /////////////////////////////////////////////////////////////////
+  
+  /// Namespace for tempative match functionalities
+  namespace temptative
+  {
+    /// State of an action
+    enum State : bool {UNACCEPTED,ACCEPTED};
+    
+    /// Store the number of temptative actions, to properly indent the diagnostic
+    inline size_t nNestedActions=0;
+    
+    /// Print to terminal if not evaluated at compile time, adding proper indentation
+    template <typename...Args>
+    constexpr void diagnostic(Args&&...args)
+    {
+      if(not std::is_constant_evaluated())
+      	for(size_t i=0;i<temptative::nNestedActions;i++)
+	  std::cout<<"\t";
+      pp::internal::diagnostic(std::forward<Args>(args)...);
+    }
+  
+    /// When destroyed, performs the action unless the action is accepted
+    template <typename F>
+    struct Action
+    {
+      using enum State;
+      
+      /// Action performed at destruction if not accepted
+      F undoer;
+      
+      /// State whether the action is accepted
+      bool state;
+      
+      /// Construct taking a funtion
+      constexpr Action(const char* descr,
+		       F&& undoer,
+		       const bool& constructionState=UNACCEPTED) :
+	undoer(undoer),
+	state(constructionState)
+      {
+	diagnostic("Starting ",descr,"\n");
+	if(not std::is_constant_evaluated())
+	  nNestedActions++;
+      }
+      
+      /// Unaccept the action
+      constexpr void unaccept()
+      {
+	state=UNACCEPTED;
+      }
+      
+      /// Accept the action
+      constexpr void accept()
+      {
+	state=ACCEPTED;
+      }
+      
+      /// Destructor, undoing the action if not accepted
+      constexpr ~Action()
+      {
+	if(state==UNACCEPTED)
+	  undoer();
+	if(not std::is_constant_evaluated())
+	  nNestedActions--;
+      }
+      
+      /// Cast to bool, returning the state
+      constexpr operator bool() const
+      {
+	return (bool)state;
+      }
+    };
+  }
+  
+  /// Makes a reduction of the whole vector \f, using the the function \f
+  /// for unary or binary reductions.
+  ///
+  /// N.B: the function takes the reduction as a second argument, as
+  /// it might be optional
+  template <typename T,
+	    typename F>
+  constexpr auto reduce(const std::vector<T>& v,
+			const F& f) -> decltype(f(std::declval<T>()))
+  {
+    if(v.size())
+      {
+	/// First element
+	auto t=f(v.front());
+	
+	for(size_t i=1;i<v.size();i++)
+	  t=f(v[i],t);
+	
+	return t;
+      }
+    else
+      return {};
+  }
+  
+  /// Returns the total number of elements of a vector of vectors
+  template <typename T>
+  constexpr size_t vectorOfVectorsTotalEntries(const std::vector<std::vector<T>>& v)
+  {
+    return reduce(v,
+		  [](const std::vector<T>& s,
+		     std::optional<size_t> x=std::nullopt)
+		  {
+		    if(not x)
+		      x=0;
+		    
+		    return *x+s.size();
+		  });
+  }
+  
+  /// Possibly adds an element to a unique elements vector
+  template <typename T>
+  constexpr std::pair<bool,size_t> maybeAddToUniqueVector(std::vector<T>& v,
+							  const T& x)
+  {
+    if(auto it=std::find(v.begin(),v.end(),x);it==v.end())
+      {
+	v.push_back(x);
+	return {true,v.size()-1};
+      }
+    else
+      return {false,std::distance(v.begin(),it)};
+  }
   
   /////////////////////////////////////////////////////////////////
   
@@ -3042,7 +3077,7 @@ namespace pp::internal
       
       lookaheads.resize(items.size(),symbols.size());
       diagnostic("Building the lookaheds for ",symbols.size()," symbols, read from lookaheads: ",lookaheads.front().symbolIs.n," nchars: ",lookaheads.front().symbolIs.data.size(),"\n");
-      lookaheads[0].symbolIs.set(iEndSymbol,1);
+      lookaheads[0].symbolIs.set(iEndSymbol);
       
       for(const GrammarState& state : stateItems)
 	for(const size_t iItem : state.iItems)
@@ -3081,7 +3116,7 @@ namespace pp::internal
 			  diagnostic("Adding to lookahead of item ",describe(items[iOtherItem])," the symbols: \n");
 			  for(const size_t& iIns : toIns)
 			    {
-			      lookaheads[iOtherItem].symbolIs.set(iIns,1);
+			      lookaheads[iOtherItem].symbolIs.set(iIns);
 			      // for(const char& c : lookaheads[iOtherItem].data)
 			      //   diagnostic(lookaheads[iOtherItem].data.size()," -> ",(int)c,"\n");
 			      // diagnostic("\n");
