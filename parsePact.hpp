@@ -1102,7 +1102,9 @@ namespace pp::internal
     StringMatcher()=delete;
   };
   
-  ///////////////////////////////////////////////////////////////
+  /////////////////////////////////////////////////////////////////
+  ////////// Node in a parse tree representing a regex ////////////
+  /////////////////////////////////////////////////////////////////
   
   /// Holds a node in the parse tree for regex
   struct RegexParseTreeNode
@@ -1329,216 +1331,244 @@ namespace pp::internal
   };
   
   /////////////////////////////////////////////////////////////////
+  //////////////// Parse a regex into a parse tree ////////////////
+  /////////////////////////////////////////////////////////////////
   
-  /// Match two expressions joined by "|"
-  ///
-  /// Forward declaration
-  constexpr std::optional<RegexParseTreeNode> matchAndParsePossiblyOrredExpr(StringMatcher& matchIn);
-  
-  /// Matches a set of chars in []
-  constexpr std::optional<RegexParseTreeNode> matchBracketExpr(StringMatcher& matchIn)
+  /// Builds a Regex Parse Tree from a regex
+  struct RegexParseTreeBuilder
   {
-    /// Rewinds if not matched
-    auto undoer=
-      matchIn.beginTemptativeMatch("matchBracketExpr",false);
+    /// Holds the status in the regex
+    StringMatcher regexStr;
     
-    if(matchIn.matchChar('['))
-      {
-	diagnostic("matched [, starting to match a bracket expression\n");
-	
-	/// Take whether the range is negated
-	const bool negated=
-	  matchIn.matchChar('^');
-	
-	if(negated)
-	  diagnostic("negated range\n");
-	
-	/// List of matchable chars
-	MergedCharRanges matchableChars;
-	
-	if(matchIn.matchChar('-'))
-	  matchableChars.set('-');
-	
-	const auto matchClass=
-	  [&matchableChars,
-	   &matchIn](const auto& matchClass,
-		     const auto& range,
-		     const auto&...tail)
-	  {
-	    if(matchIn.matchStr(range.first))
-	      {
-		diagnostic("matched class ",range.first,"\n");
-		
-		matchableChars.set(range.second);
-		
-		return true;
-	      }
-	    else
-	      if constexpr(sizeof...(tail))
-		return matchClass(matchClass,tail...);
-	      else
-		return false;
-	  };
-	
-	/// Take note of whether something has been matched
-	bool matched=true;
-	while(matched)
-	  {
-	    if(not std::apply([&matchClass](const auto&...classes)
-	    {
-	      return matchClass(matchClass,classes...);
-	    },CharClasses::classes))
-	      {
-		diagnostic("matched no char class\n");
-		
-		if(const char b=matchIn.matchPossiblyEscapedCharNotIn("^]-"))
-		  {
-		    diagnostic("matched char ",b,"\n");
-		    
-		    /// Rewinds if not matched
-		    auto rangeMatchState=
-		      matchIn.beginTemptativeMatch("matchBracketExprRange",false);
-		    
-		    if(matchIn.matchChar('-'))
-		      {
-			diagnostic(" matched - to get char range\n");
-			
-			if(const char e=matchIn.matchPossiblyEscapedCharNotIn("^]-"))
-			  {
-			    diagnostic("  matched char range end ",e,"\n");
-			    matchableChars.set(std::make_pair(b,e));
-			    rangeMatchState.accept();
-			  }
-		      }
-		    
-		    if(not rangeMatchState)
-		      {
-			diagnostic("no char range end, single char\n");
-			matchableChars.set(b);
-		      }
-		  }
-		else
-		  matched=false;
-	      }
-	  }
-	
-	if(matchIn.matchChar('-'))
-	  matchableChars.set('-');
-	
-	if((undoer.state=matchIn.matchChar(']')))
-	  {
-	    if(negated)
-	      matchableChars.negate();
-	    
-	    diagnostic("matched ]\n");
-	    
-	    /// Result to be returned, containing a nested list of OR nodes
-	    std::optional<RegexParseTreeNode> res;
-	    
-	    matchableChars.onAllRanges([&res](const char& b,
-					      const char& e)
-	    {
-	      /// First create a detached node
-	      auto tmp=
-		RegexParseTreeNode{RegexParseTreeNode::Type::CHAR,{},b,e};
-	      
-	      if(res)
-		res=RegexParseTreeNode{RegexParseTreeNode::Type::OR,{std::move(*res),std::move(tmp)}};
-	      else
-		res=std::move(tmp);
-	    });
-	    
-	    return res;
-	  }
-      }
-    
-    return {};
-  }
-  
-  /// Matches a subexpression
-  constexpr std::optional<RegexParseTreeNode> matchSubExpr(StringMatcher& matchIn)
-  {
-    /// Rewinds if not matched
-    auto undoer=
-      matchIn.beginTemptativeMatch("matchSubExpr",false);
-    
-    if((undoer.state=matchIn.matchChar('(')))
-      if(std::optional<RegexParseTreeNode> s=matchAndParsePossiblyOrredExpr(matchIn))
+    /// Matches a set of chars in []
+    constexpr std::optional<RegexParseTreeNode> matchBracketExpr()
+    {
+      /// Rewinds if not matched
+      auto undoer=
+	regexStr.beginTemptativeMatch("matchBracketExpr",false);
+      
+      if(regexStr.matchChar('['))
 	{
-	  diagnostic("Looking at ')' at string: ",matchIn.ref,"\n");
-	  if((undoer.state=s and matchIn.matchChar(')')))
-	    return s;
+	  diagnostic("matched [, starting to match a bracket expression\n");
+	  
+	  /// Take whether the range is negated
+	  const bool negated=
+	    regexStr.matchChar('^');
+	  
+	  if(negated)
+	    diagnostic("negated range\n");
+	  
+	  /// List of matchable chars
+	  MergedCharRanges matchableChars;
+	  
+	  if(regexStr.matchChar('-'))
+	    matchableChars.set('-');
+	  
+	  /// Iteratively match a set of char classes
+	  const auto matchClass=
+	    [&matchableChars,
+	     this](const auto& matchClass,
+		   const auto& range,
+		   const auto&...tail)
+	    {
+	      if(regexStr.matchStr(range.first))
+		{
+		  diagnostic("matched class ",range.first,"\n");
+		  
+		  matchableChars.set(range.second);
+		  
+		  return true;
+		}
+	      else
+		if constexpr(sizeof...(tail))
+		  return matchClass(matchClass,tail...);
+		else
+		  return false;
+	    };
+	  
+	  /// Take note of whether something has been matched
+	  bool matched=true;
+	  while(matched)
+	    {
+	      if(not std::apply([&matchClass](const auto&...classes)
+	      {
+		return matchClass(matchClass,classes...);
+	      },CharClasses::classes))
+		{
+		  diagnostic("matched no char class\n");
+		  
+		  if(const char b=regexStr.matchPossiblyEscapedCharNotIn("^]-"))
+		    {
+		      diagnostic("matched char ",b,"\n");
+		      
+		      /// Rewinds if not matched
+		      auto rangeMatchState=
+			regexStr.beginTemptativeMatch("matchBracketExprRange",false);
+		      
+		      if(regexStr.matchChar('-'))
+			{
+			  diagnostic(" matched - to get char range\n");
+			  
+			  if(const char e=regexStr.matchPossiblyEscapedCharNotIn("^]-"))
+			    {
+			      diagnostic("  matched char range end ",e,"\n");
+			      matchableChars.set(std::make_pair(b,e));
+			      rangeMatchState.accept();
+			    }
+			}
+		      
+		      if(not rangeMatchState)
+			{
+			  diagnostic("no char range end, single char\n");
+			  matchableChars.set(b);
+			}
+		    }
+		  else
+		    matched=false;
+		}
+	    }
+	  
+	  if(regexStr.matchChar('-'))
+	    matchableChars.set('-');
+	  
+	  if((undoer.state=regexStr.matchChar(']')))
+	    {
+	      if(negated)
+		matchableChars.negate();
+	      
+	      diagnostic("matched ]\n");
+	      
+	      /// Result to be returned, containing a nested list of OR nodes
+	      std::optional<RegexParseTreeNode> res;
+	      
+	      matchableChars.onAllRanges([&res](const char& b,
+						const char& e)
+	      {
+		/// First create a detached node
+		auto tmp=
+		  RegexParseTreeNode{RegexParseTreeNode::Type::CHAR,{},b,e};
+		
+		if(res)
+		  res=RegexParseTreeNode{RegexParseTreeNode::Type::OR,{std::move(*res),std::move(tmp)}};
+		else
+		  res=std::move(tmp);
+	      });
+	      
+	      return res;
+	    }
 	}
-    diagnostic("not accepted\n");
+      
+      return {};
+    }
     
-    return {};
-  }
+    /// Matches a subexpression
+    constexpr std::optional<RegexParseTreeNode> matchSubExpr()
+    {
+      /// Rewinds if not matched
+      auto undoer=
+	regexStr.beginTemptativeMatch("matchSubExpr",false);
+      
+      if((undoer.state=regexStr.matchChar('(')))
+	if(std::optional<RegexParseTreeNode> s=matchAndParsePossiblyOrredExpr())
+	  {
+	    diagnostic("Looking at ')' at string: ",regexStr.ref,"\n");
+	    if((undoer.state=s and regexStr.matchChar(')')))
+	      return s;
+	  }
+      diagnostic("not accepted\n");
+      
+      return {};
+    }
+    
+    /// Matches any char but '\0'
+    constexpr std::optional<RegexParseTreeNode> matchDot()
+    {
+      if(regexStr.matchChar('.'))
+	return RegexParseTreeNode{RegexParseTreeNode::Type::CHAR,{},1,std::numeric_limits<char>::max()};
+      
+      return {};
+    }
+    
+    /// Match a char including possible escape
+    constexpr std::optional<RegexParseTreeNode> matchAndParsePossiblyEscapedChar()
+    {
+      if(const char c=regexStr.matchPossiblyEscapedCharNotIn("|*+?()"))
+	return RegexParseTreeNode{RegexParseTreeNode::Type::CHAR,{},c,(char)(c+1)};
+      
+      return {};
+    }
+    
+    /// Match an expression and possible postfix
+    constexpr std::optional<RegexParseTreeNode> matchAndParseExprWithPossiblePostfix()
+    {
+      using enum RegexParseTreeNode::Type;
+      
+      /// Result to be returned
+      std::optional<RegexParseTreeNode> m;
+      
+      if(not (m=matchBracketExpr()))
+	if(not (m=matchSubExpr()))
+	  if(not (m=matchDot()))
+	    m=matchAndParsePossiblyEscapedChar();
+      
+      if(m)
+	if(const char c=regexStr.matchAnyCharIn("+?*"))
+	  m=RegexParseTreeNode{(c=='+')?NONZERO:((c=='?')?OPT:MANY),{std::move(*m)}};
+      
+      return m;
+    }
+    
+    /// Match one or two expressions
+    constexpr std::optional<RegexParseTreeNode> matchAndParsePossiblyAndedExpr()
+    {
+      /// First and possible only subexpression
+      std::optional<RegexParseTreeNode> lhs=
+	matchAndParseExprWithPossiblePostfix();
+      
+      if(lhs)
+	if(std::optional<RegexParseTreeNode> rhs=matchAndParsePossiblyAndedExpr())
+	  return RegexParseTreeNode{RegexParseTreeNode::Type::AND,{std::move(*lhs),std::move(*rhs)}};
+      
+      return lhs;
+    }
+    
+    /// Match one or two expression, the second is optionally matched
+    constexpr std::optional<RegexParseTreeNode> matchAndParsePossiblyOrredExpr()
+    {
+      /// First and possible only subexpression
+      std::optional<RegexParseTreeNode> lhs=
+	matchAndParsePossiblyAndedExpr();
+      
+      if(auto undoer=regexStr.beginTemptativeMatch("orExprSecondPart",false);regexStr.matchChar('|'))
+	if(std::optional<RegexParseTreeNode> rhs=matchAndParsePossiblyAndedExpr();(undoer.state=rhs.has_value()))
+	  return RegexParseTreeNode{RegexParseTreeNode::Type::OR,{std::move(*lhs),std::move(*rhs)}};
+      
+      return lhs;
+    }
+    
+    /// State whether the parsing was finished
+    constexpr bool finished() const
+    {
+      return regexStr.ref.empty();
+    }
+    
+    /// Construct from string view
+    constexpr RegexParseTreeBuilder(const std::string_view &regexStr) :
+      regexStr(regexStr)
+    {
+    }
+    
+    /// Parse a regex into a parse tree
+    static constexpr std::optional<RegexParseTreeNode> parseRegex(RegexParseTreeBuilder builder)
+    {
+      if(const std::optional<RegexParseTreeNode> t=builder.matchAndParsePossiblyOrredExpr();t and builder.finished())
+	return t;
+      else
+	return {};
+    }
+  };
   
-  /// Matches any char but '\0'
-  constexpr std::optional<RegexParseTreeNode> matchDot(StringMatcher& matchIn)
-  {
-    if(matchIn.matchChar('.'))
-      return RegexParseTreeNode{RegexParseTreeNode::Type::CHAR,{},1,std::numeric_limits<char>::max()};
-    
-    return {};
-  }
-  
-  /// Match a char including possible escape
-  constexpr std::optional<RegexParseTreeNode> matchAndParsePossiblyEscapedChar(StringMatcher& matchIn)
-  {
-    if(const char c=matchIn.matchPossiblyEscapedCharNotIn("|*+?()"))
-      return RegexParseTreeNode{RegexParseTreeNode::Type::CHAR,{},c,(char)(c+1)};
-    
-    return {};
-  }
-  
-  /// Match an expression and possible postfix
-  constexpr std::optional<RegexParseTreeNode> matchAndParseExprWithPossiblePostfix(StringMatcher& matchIn)
-  {
-    using enum RegexParseTreeNode::Type;
-    
-    /// Result to be returned
-    std::optional<RegexParseTreeNode> m;
-    
-    if(not (m=matchBracketExpr(matchIn)))
-      if(not (m=matchSubExpr(matchIn)))
-	if(not (m=matchDot(matchIn)))
-	  m=matchAndParsePossiblyEscapedChar(matchIn);
-    
-    if(m)
-      if(const char c=matchIn.matchAnyCharIn("+?*"))
-	m=RegexParseTreeNode{(c=='+')?NONZERO:((c=='?')?OPT:MANY),{std::move(*m)}};
-    
-    return m;
-  }
-  
-  /// Match one or two expressions
-  constexpr std::optional<RegexParseTreeNode> matchAndParsePossiblyAndedExpr(StringMatcher& matchIn)
-  {
-    /// First and possible only subexpression
-    std::optional<RegexParseTreeNode> lhs=
-      matchAndParseExprWithPossiblePostfix(matchIn);
-    
-    if(lhs)
-      if(std::optional<RegexParseTreeNode> rhs=matchAndParsePossiblyAndedExpr(matchIn))
-	return RegexParseTreeNode{RegexParseTreeNode::Type::AND,{std::move(*lhs),std::move(*rhs)}};
-    
-    return lhs;
-  }
-  
-  /// Match one or two expression, the second is optionally matched
-  constexpr std::optional<RegexParseTreeNode> matchAndParsePossiblyOrredExpr(StringMatcher& matchIn)
-  {
-    /// First and possible only subexpression
-    std::optional<RegexParseTreeNode> lhs=
-      matchAndParsePossiblyAndedExpr(matchIn);
-    
-    if(auto undoer=matchIn.beginTemptativeMatch("orExprSecondPart",false);matchIn.matchChar('|'))
-      if(std::optional<RegexParseTreeNode> rhs=matchAndParsePossiblyAndedExpr(matchIn);(undoer.state=rhs.has_value()))
-	return RegexParseTreeNode{RegexParseTreeNode::Type::OR,{std::move(*lhs),std::move(*rhs)}};
-    
-    return lhs;
-  }
+  /////////////////////////////////////////////////////////////////
   
   /// Associate the regex to be matched and the index of the symbol to be passed
   struct RegexToken
@@ -1552,7 +1582,7 @@ namespace pp::internal
   
   /// Gets the parse tree from a list of regex
   constexpr std::optional<RegexParseTreeNode> parseTreeFromRegex(const std::vector<RegexToken>& regexTokens,
-							      const size_t pos=0)
+								 const size_t pos=0)
   {
     using enum RegexParseTreeNode::Type;
     
@@ -1560,8 +1590,7 @@ namespace pp::internal
       {
 	diagnostic("Getting the parse tree of regex ",regexTokens[pos].str,"\n");
 	
-	if(StringMatcher match(regexTokens[pos].str);std::optional<RegexParseTreeNode> t=matchAndParsePossiblyOrredExpr(match))
-	  if(t and match.ref.empty())
+	if(std::optional<RegexParseTreeNode> t=RegexParseTreeBuilder::parseRegex(regexTokens[pos].str))
 	    {
 	      /// Result, to be returned if last to be matched
 	      RegexParseTreeNode res(AND,{std::move(*t),{TOKEN,{},'\0','\0',regexTokens[pos].iSymbol}});
