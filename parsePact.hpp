@@ -42,8 +42,6 @@ namespace pp::internal
   //////// Basic helpful types to hold constexpr data /////////////
   /////////////////////////////////////////////////////////////////
   
-  /////////////////////////////////////////////////////////////////
-  
   /// Custom bitset
   struct BitSet
   {
@@ -207,6 +205,63 @@ namespace pp::internal
   };
   
   /////////////////////////////////////////////////////////////////
+  /////////////////// Operations on vectors ///////////////////////
+  /////////////////////////////////////////////////////////////////
+  
+  /// Makes a reduction of the whole vector f, using the the function
+  /// f for unary or binary reductions.
+  ///
+  /// N.B: the function takes the reduction as a second argument, as
+  /// it might be optional
+  template <typename T,
+	    typename F>
+  constexpr auto reduce(const std::vector<T>& v,
+			const F& f) -> decltype(f(std::declval<T>()))
+  {
+    if(v.size())
+      {
+	/// First element
+	auto t=f(v.front());
+	
+	for(size_t i=1;i<v.size();i++)
+	  t=f(v[i],t);
+	
+	return t;
+      }
+    else
+      return {};
+  }
+  
+  /// Returns the total number of elements of a vector of vectors
+  template <typename T>
+  constexpr size_t vectorOfVectorsTotalEntries(const std::vector<std::vector<T>>& v)
+  {
+    return reduce(v,
+		  [](const std::vector<T>& s,
+		     std::optional<size_t> x=std::nullopt)
+		  {
+		    if(not x)
+		      x=0;
+		    
+		    return *x+s.size();
+		  });
+  }
+  
+  /// Possibly adds an element to a unique elements vector
+  template <typename T>
+  constexpr std::pair<bool,size_t> maybeAddToUniqueVector(std::vector<T>& v,
+							  const T& x)
+  {
+    if(auto it=std::find(v.begin(),v.end(),x);it==v.end())
+      {
+	v.push_back(x);
+	return {true,v.size()-1};
+      }
+    else
+      return {false,std::distance(v.begin(),it)};
+  }
+  
+  /////////////////////////////////////////////////////////////////
   ///////////////////////// Diagnostic ////////////////////////////
   /////////////////////////////////////////////////////////////////
   
@@ -227,7 +282,301 @@ namespace pp::internal
   }
   
   /////////////////////////////////////////////////////////////////
-  //////////////////// String matching ////////////////////////////
+  ////////////////// Ranges of characters /////////////////////////
+  /////////////////////////////////////////////////////////////////
+  
+  /// Base char range operations
+  template <typename T>
+  struct BaseCharRanges :
+    StaticPolymorphic<T>
+  {
+    /// Import the static polymorphism cast
+    using StaticPolymorphic<T>::self;
+    
+    /// Insert a single char
+    constexpr void set(const char& c)
+    {
+      self().set(std::make_pair(c,(char)(c+1)));
+    }
+    
+    /// Insert a string
+    constexpr void set(const char* str)
+    {
+      while(*str!='\0')
+	self().set(*str++);
+    }
+    
+    /// Insert a tuple
+    template <typename...Head>
+    constexpr void set(const std::tuple<Head...>& head)
+    {
+      std::apply([this](const Head&...head)
+      {
+	self().set(head...);
+      },head);
+    }
+    
+    /// Generic case
+    template <typename...Args>
+    constexpr void set(const Args&...args)
+    {
+      (self().set(args),...);
+    }
+  };
+  
+  /// Describes a range passed by the extrema
+  constexpr std::string rangeDescribe(const char b,
+				      const char e)
+  {
+    std::string res;
+    auto printChar=
+      [&res](const char c)
+      {
+	if(c>=32 and c<127)
+	  res+=c;
+	else
+	  {
+	    res+="\\";
+	    for(char t=c,m=100;m;m/=10)
+	      {
+		res+=(char)((t/m)+48);
+		t%=m;
+	      }
+	  }
+      };
+    
+    if(e==b+1)
+      {
+	res="'";
+	printChar(b);
+	res+="'";
+      }
+    else
+      {
+	res="[";
+	printChar(b);
+	res+=";";
+	printChar(e);
+	res+=")";
+      }
+    
+    return res;
+  }
+  
+  /// Describes a range
+  constexpr std::string rangeDescribe(const std::pair<char,char>& r)
+  {
+    return rangeDescribe(r.first,r.second);
+  }
+  
+  /// Range of chars where consecutive ranges are not merged
+  struct UnmergedCharRanges :
+    BaseCharRanges<UnmergedCharRanges>
+  {
+    /// Delimiters of a range: begins (true) or just end(false) at
+    /// the given char (depending on the bool)
+    using RangeDel=
+      std::pair<char,bool>;
+    
+    /// Delimiters of the range
+    std::vector<RangeDel> ranges;
+    
+    /// Import the set method from base class
+    using BaseCharRanges<UnmergedCharRanges>::set;
+    
+    /// Insert a range
+    constexpr void set(const std::pair<char,char>& head)
+    {
+      /// Begin and end of the range
+      const auto& [b,e]=
+	head;
+      
+      /// Current range, at the beginning set at the first range delimiter
+      auto cur=
+	ranges.begin();
+      
+      /// Determine whether the range begins, when the end of
+      /// the range will be inserted
+      bool startNewRange=
+	false;
+      
+      // Find where to insert the range begin
+      while(cur!=ranges.end() and cur->first<b)
+	startNewRange=(cur++)->second;
+      
+      // Insert the beginning of the range if not present
+      if(cur==ranges.end() or cur->first!=b)
+	cur=ranges.insert(cur,{b,true})+1;
+      
+      // Find where to insert the range end, marking that a
+      // range must start at all intermediate delimiters
+      while(cur!=ranges.end() and cur->first<e)
+	{
+	  startNewRange=cur->second;
+	  cur++->second=true;
+	}
+      
+      // Insert the end of the range end, if not present
+      if(cur==ranges.end() or cur->first!=e)
+	ranges.insert(cur,{e,startNewRange});
+      
+      diagnostic("  new range after inserting ",rangeDescribe(b,e),": \n");
+      for(const auto& [d,isBeg] : ranges)
+	diagnostic("    r: ",d," begins: ",(isBeg?"True":"False"),")\n");
+      diagnostic("\n");
+    }
+    
+    /// Loop on all ranges
+    template <typename F>
+    constexpr void onAllRanges(const F& f) const
+    {
+      for(const auto& [d,isBeg] : ranges)
+	diagnostic("    r: ",d," begins: ",(isBeg?"True":"False"),"\n");
+      
+      for(size_t iRangeBeg=0;iRangeBeg+1<ranges.size();iRangeBeg++)
+	{
+	  /// Beginning of the range
+	  const char& b=
+	    ranges[iRangeBeg].first;
+	  
+	  /// End of the range
+	  const char& e=
+	    ranges[iRangeBeg+1].first;
+	  
+	  f(b,e);
+	  
+	  // If a new range does not start here, move on
+	  if(not ranges[iRangeBeg+1].second)
+	    iRangeBeg++;
+	}
+    }
+  };
+  
+  /// Range of chars where consecutive ranges are not merged
+  struct MergedCharRanges :
+    BaseCharRanges<MergedCharRanges>
+  {
+    /// Delimiters of a range, stored as [beg=first,end=second)
+    using RangeDel=
+      std::pair<char,char>;
+    
+    /// Delimiters of the range
+    std::vector<RangeDel> ranges;
+    
+    /// Import the set methods from base class
+    using BaseCharRanges<MergedCharRanges>::set;
+    
+    /// Convert to the complementary range
+    constexpr void negate()
+    {
+      /// Previous end, at the beginning is the first nonzero char
+      char prevEnd=
+	'\0'+1;
+      
+      /// Creates the negated ranges
+      std::vector<RangeDel> negatedRanges;
+      for(const auto& [b,e] : ranges)
+	{
+	  if(prevEnd!=b)
+	    negatedRanges.push_back({prevEnd,b});
+	  prevEnd=e;
+	}
+      
+      // Add from last range to the end
+      if(const char m=std::numeric_limits<char>::max();prevEnd<m)
+	negatedRanges.push_back({prevEnd,m});
+      
+      diagnostic("range:\n");
+      for(const auto& [b,e] : ranges)
+	diagnostic(" ",rangeDescribe(b,e),"\n");
+      
+      diagnostic("negated range:\n");
+      for(const auto& [b,e] : negatedRanges)
+	diagnostic(" ",rangeDescribe(b,e),"\n");
+      
+      // Replaces the range with the negated one
+      ranges=
+	std::move(negatedRanges);
+    }
+    
+    /// Insert a range
+    constexpr void set(const std::pair<char,char>& head)
+    {
+      /// Begin and end of the range to be inserted
+      const auto& [b,e]=
+	head;
+      
+      diagnostic("Inserting ",rangeDescribe(head),"\n");
+      
+      /// Current range, at the beginning set at the first range delimiter
+      auto cur=
+	ranges.begin();
+      
+      // Find where to insert the range
+      if(ranges.size())
+	{
+	  diagnostic("Skipping all ranges until finding one which ends after the beginning of that to be inserted\n");
+	  while(cur!=ranges.end() and cur->second<b)
+	    {
+	      diagnostic("  Skipping ",rangeDescribe(*cur),"\n");
+	      cur++;
+	    }
+	  
+	  if(cur==ranges.end())
+	    diagnostic("All existing ranges skipped\n");
+	  else
+	    diagnostic("Range ",rangeDescribe(*cur)," ends at ",cur->second," which is after ",b,"\n");
+	}
+      else
+	diagnostic("No range present so far, will insert as a first range\n");
+      
+      /// Index of the position where to insert, useful for debug
+      const size_t i=
+	std::distance(ranges.begin(),cur);
+      
+      // Insert the beginning of the range if not present
+      if(cur==ranges.end() or e<cur->first)
+	{
+	  diagnostic("Inserting ",rangeDescribe(head)," at ",i,"\n");
+	  ranges.insert(cur,head);
+	}
+      else
+	{
+	  if(cur->first>b)
+	    {
+	      const char prev=cur->first;
+	      cur->first=std::min(cur->first,b);
+	      diagnostic("range ",i," ",rangeDescribe(prev,cur->second)," extended left to ",rangeDescribe(*cur),"\n");
+	    }
+	  
+	  if(cur->second<e)
+	    {
+	      const char prev=cur->second;
+	      cur->second=e;
+	      diagnostic("range ",i," ",rangeDescribe(cur->first,prev)," extended right to ",rangeDescribe(*cur),"\n");
+	      
+	      while(cur+1!=ranges.end() and cur->second>=(cur+1)->first)
+		{
+		  cur->second=std::max(cur->second,(cur+1)->second);
+		  diagnostic("extended right to ",rangeDescribe(*cur),"\n");
+		  diagnostic("erasing ",rangeDescribe((cur+1)->first,(cur+1)->second),"\n");
+		  cur=ranges.erase(cur+1)-1;
+		}
+	    }
+	}
+    }
+    
+    /// Loop on all ranges
+    template <typename F>
+    constexpr void onAllRanges(const F& f) const
+    {
+      for(const auto& [b,e] : ranges)
+	f(b,e);
+    }
+  };
+  
+  /////////////////////////////////////////////////////////////////
+  //////////////////// Tempatative actions ////////////////////////
   /////////////////////////////////////////////////////////////////
   
   /// Namespace for tempative match functionalities
@@ -302,59 +651,8 @@ namespace pp::internal
     };
   }
   
-  /// Makes a reduction of the whole vector \f, using the the function \f
-  /// for unary or binary reductions.
-  ///
-  /// N.B: the function takes the reduction as a second argument, as
-  /// it might be optional
-  template <typename T,
-	    typename F>
-  constexpr auto reduce(const std::vector<T>& v,
-			const F& f) -> decltype(f(std::declval<T>()))
-  {
-    if(v.size())
-      {
-	/// First element
-	auto t=f(v.front());
-	
-	for(size_t i=1;i<v.size();i++)
-	  t=f(v[i],t);
-	
-	return t;
-      }
-    else
-      return {};
-  }
-  
-  /// Returns the total number of elements of a vector of vectors
-  template <typename T>
-  constexpr size_t vectorOfVectorsTotalEntries(const std::vector<std::vector<T>>& v)
-  {
-    return reduce(v,
-		  [](const std::vector<T>& s,
-		     std::optional<size_t> x=std::nullopt)
-		  {
-		    if(not x)
-		      x=0;
-		    
-		    return *x+s.size();
-		  });
-  }
-  
-  /// Possibly adds an element to a unique elements vector
-  template <typename T>
-  constexpr std::pair<bool,size_t> maybeAddToUniqueVector(std::vector<T>& v,
-							  const T& x)
-  {
-    if(auto it=std::find(v.begin(),v.end(),x);it==v.end())
-      {
-	v.push_back(x);
-	return {true,v.size()-1};
-      }
-    else
-      return {false,std::distance(v.begin(),it)};
-  }
-  
+  /////////////////////////////////////////////////////////////////
+  ////////////////////// String matching //////////////////////////
   /////////////////////////////////////////////////////////////////
   
   ///Matches a single char condition
@@ -502,7 +800,7 @@ namespace pp::internal
 				[back=*this,
 				 this]()
 				{
-				  diagnostic("not accepted, putting back ref \"",this->ref.begin(),"\" -> \"",back.ref.begin(),"\"\n");
+				  diagnostic("not accepted, putting back ref \"",this->ref,"\" -> \"",back.ref,"\"\n");
 				  *this=back;
 				},acceptedByDefault);
     }
@@ -800,6 +1098,8 @@ namespace pp::internal
     StringMatcher()=delete;
   };
   
+  ///////////////////////////////////////////////////////////////
+  
   /// Holds a node in the parse tree for regex
   struct RegexParserNode
   {
@@ -1031,296 +1331,6 @@ namespace pp::internal
   /// Forward declaration
   constexpr std::optional<RegexParserNode> matchAndParsePossiblyOrredExpr(StringMatcher& matchIn);
   
-  /// Base char range operations
-  template <typename T>
-  struct BaseCharRanges :
-    StaticPolymorphic<T>
-  {
-    /// Import the static polymorphism cast
-    using StaticPolymorphic<T>::self;
-    
-    /// Insert a single char
-    constexpr void set(const char& c)
-    {
-      self().set(std::make_pair(c,(char)(c+1)));
-    }
-    
-    /// Insert a string
-    constexpr void set(const char* str)
-    {
-      while(*str!='\0')
-	self().set(*str++);
-    }
-    
-    /// Insert a tuple
-    template <typename...Head>
-    constexpr void set(const std::tuple<Head...>& head)
-    {
-      std::apply([this](const Head&...head)
-      {
-	self().set(head...);
-      },head);
-    }
-    
-    /// Generic case
-    template <typename...Args>
-    constexpr void set(const Args&...args)
-    {
-      (self().set(args),...);
-    }
-  };
-  
-  /// Describes a range passed by the extrema
-  constexpr std::string rangeDescribe(const char b,
-				      const char e)
-  {
-    std::string res;
-    auto printChar=
-      [&res](const char c)
-      {
-	if(c>=32 and c<127)
-	  res+=c;
-	else
-	  {
-	    res+="\\";
-	    for(char t=c,m=100;m;m/=10)
-	      {
-		res+=(char)((t/m)+48);
-		t%=m;
-	      }
-	  }
-      };
-    
-    if(e==b+1)
-      {
-	res="'";
-	printChar(b);
-	res+="'";
-      }
-    else
-      {
-	res="[";
-	printChar(b);
-	res+=";";
-	printChar(e);
-	res+=")";
-      }
-    
-    return res;
-  }
-  
-  /// Describes a range
-  constexpr std::string rangeDescribe(const std::pair<char,char>& r)
-  {
-    return rangeDescribe(r.first,r.second);
-  }
-  
-  /// Range of chars where consecutive ranges are not merged
-  struct UnmergedCharRanges :
-    BaseCharRanges<UnmergedCharRanges>
-  {
-    /// Delimiters of a range: begins (true) or just end(false) at
-    /// the given char (depending on the bool)
-    using RangeDel=
-      std::pair<char,bool>;
-    
-    /// Delimiters of the range
-    std::vector<RangeDel> ranges;
-    
-    /// Import the set method from base class
-    using BaseCharRanges<UnmergedCharRanges>::set;
-    
-    /// Insert a range
-    constexpr void set(const std::pair<char,char>& head)
-    {
-      /// Begin and end of the range
-      const auto& [b,e]=
-	head;
-      
-      /// Current range, at the beginning set at the first range delimiter
-      auto cur=
-	ranges.begin();
-      
-      /// Determine whether the range begins, when the end of
-      /// the range will be inserted
-      bool startNewRange=
-	false;
-      
-      // Find where to insert the range begin
-      while(cur!=ranges.end() and cur->first<b)
-	startNewRange=(cur++)->second;
-      
-      // Insert the beginning of the range if not present
-      if(cur==ranges.end() or cur->first!=b)
-	cur=ranges.insert(cur,{b,true})+1;
-      
-      // Find where to insert the range end, marking that a
-      // range must start at all intermediate delimiters
-      while(cur!=ranges.end() and cur->first<e)
-	{
-	  startNewRange=cur->second;
-	  cur++->second=true;
-	}
-      
-      // Insert the end of the range end, if not present
-      if(cur==ranges.end() or cur->first!=e)
-	ranges.insert(cur,{e,startNewRange});
-      
-      diagnostic("  new range after inserting ",rangeDescribe(b,e),": \n");
-      for(const auto& [d,isBeg] : ranges)
-	diagnostic("    r: ",d," begins: ",(isBeg?"True":"False"),")\n");
-      diagnostic("\n");
-    }
-    
-    /// Loop on all ranges
-    template <typename F>
-    constexpr void onAllRanges(const F& f) const
-    {
-      for(const auto& [d,isBeg] : ranges)
-	diagnostic("    r: ",d," begins: ",(isBeg?"True":"False"),"\n");
-      
-      for(size_t iRangeBeg=0;iRangeBeg+1<ranges.size();iRangeBeg++)
-	{
-	  /// Beginning of the range
-	  const char& b=
-	    ranges[iRangeBeg].first;
-	  
-	  /// End of the range
-	  const char& e=
-	    ranges[iRangeBeg+1].first;
-	  
-	  f(b,e);
-	  
-	  // If a new range does not start here, move on
-	  if(not ranges[iRangeBeg+1].second)
-	    iRangeBeg++;
-	}
-    }
-  };
-  
-  /// Range of chars where consecutive ranges are not merged
-  struct MergedCharRanges :
-    BaseCharRanges<MergedCharRanges>
-  {
-    /// Delimiters of a range, stored as [beg=first,end=second)
-    using RangeDel=
-      std::pair<char,char>;
-    
-    /// Delimiters of the range
-    std::vector<RangeDel> ranges;
-    
-    /// Import the set methods from base class
-    using BaseCharRanges<MergedCharRanges>::set;
-    
-    /// Convert to the complementary range
-    constexpr void negate()
-    {
-      /// Previous end, at the beginning is the first nonzero char
-      char prevEnd=
-	'\0'+1;
-      
-      /// Creates the negated ranges
-      std::vector<RangeDel> negatedRanges;
-      for(const auto& [b,e] : ranges)
-	{
-	  if(prevEnd!=b)
-	    negatedRanges.push_back({prevEnd,b});
-	  prevEnd=e;
-	}
-      
-      // Add from last range to the end
-      if(const char m=std::numeric_limits<char>::max();prevEnd<m)
-	negatedRanges.push_back({prevEnd,m});
-      
-      diagnostic("range:\n");
-      for(const auto& [b,e] : ranges)
-	diagnostic(" ",rangeDescribe(b,e),"\n");
-      
-      diagnostic("negated range:\n");
-      for(const auto& [b,e] : negatedRanges)
-	diagnostic(" ",rangeDescribe(b,e),"\n");
-      
-      // Replaces the range with the negated one
-      ranges=
-	std::move(negatedRanges);
-    }
-    
-    /// Insert a range
-    constexpr void set(const std::pair<char,char>& head)
-    {
-      /// Begin and end of the range to be inserted
-      const auto& [b,e]=
-	head;
-      
-      diagnostic("Inserting ",rangeDescribe(head),"\n");
-      
-      /// Current range, at the beginning set at the first range delimiter
-      auto cur=
-	ranges.begin();
-      
-      // Find where to insert the range
-      if(ranges.size())
-	{
-	  diagnostic("Skipping all ranges until finding one which ends after the beginning of that to be inserted\n");
-	  while(cur!=ranges.end() and cur->second<b)
-	    {
-	      diagnostic("  Skipping ",rangeDescribe(*cur),"\n");
-	      cur++;
-	    }
-	  
-	  if(cur==ranges.end())
-	    diagnostic("All existing ranges skipped\n");
-	  else
-	    diagnostic("Range ",rangeDescribe(*cur)," ends at ",cur->second," which is after ",b,"\n");
-	}
-      else
-	diagnostic("No range present so far, will insert as a first range\n");
-      
-      /// Index of the position where to insert, useful for debug
-      const size_t i=
-	std::distance(ranges.begin(),cur);
-      
-      // Insert the beginning of the range if not present
-      if(cur==ranges.end() or e<cur->first)
-	{
-	  diagnostic("Inserting ",rangeDescribe(head)," at ",i,"\n");
-	  ranges.insert(cur,head);
-	}
-      else
-	{
-	  if(cur->first>b)
-	    {
-	      const char prev=cur->first;
-	      cur->first=std::min(cur->first,b);
-	      diagnostic("range ",i," ",rangeDescribe(prev,cur->second)," extended left to ",rangeDescribe(*cur),"\n");
-	    }
-	  
-	  if(cur->second<e)
-	    {
-	      const char prev=cur->second;
-	      cur->second=e;
-	      diagnostic("range ",i," ",rangeDescribe(cur->first,prev)," extended right to ",rangeDescribe(*cur),"\n");
-	      
-	      while(cur+1!=ranges.end() and cur->second>=(cur+1)->first)
-		{
-		  cur->second=std::max(cur->second,(cur+1)->second);
-		  diagnostic("extended right to ",rangeDescribe(*cur),"\n");
-		  diagnostic("erasing ",rangeDescribe((cur+1)->first,(cur+1)->second),"\n");
-		  cur=ranges.erase(cur+1)-1;
-		}
-	    }
-	}
-    }
-    
-    /// Loop on all ranges
-    template <typename F>
-    constexpr void onAllRanges(const F& f) const
-    {
-      for(const auto& [b,e] : ranges)
-	f(b,e);
-    }
-  };
-  
   /// Matches a set of chars in []
   constexpr std::optional<RegexParserNode> matchBracketExpr(StringMatcher& matchIn)
   {
@@ -1544,20 +1554,24 @@ namespace pp::internal
     using enum RegexParserNode::Type;
     
     if(pos<regexTokens.size())
-      if(StringMatcher match(regexTokens[pos].str);std::optional<RegexParserNode> t=matchAndParsePossiblyOrredExpr(match))
-	if(t and match.ref.empty())
-	  {
-	    /// Result, to be returned if last to be matched
-	    RegexParserNode res(AND,{std::move(*t),{TOKEN,{},'\0','\0',regexTokens[pos].iSymbol}});
-	    
-	    if(pos+1<regexTokens.size())
-	      if(std::optional<RegexParserNode> n=parseTreeFromRegex(regexTokens,pos+1))
-		return RegexParserNode(OR,{std::move(res),std::move(*n)});
+      {
+	diagnostic("Getting the parse tree of regex ",regexTokens[pos].str,"\n");
+	
+	if(StringMatcher match(regexTokens[pos].str);std::optional<RegexParserNode> t=matchAndParsePossiblyOrredExpr(match))
+	  if(t and match.ref.empty())
+	    {
+	      /// Result, to be returned if last to be matched
+	      RegexParserNode res(AND,{std::move(*t),{TOKEN,{},'\0','\0',regexTokens[pos].iSymbol}});
+	      
+	      if(pos+1<regexTokens.size())
+		if(std::optional<RegexParserNode> n=parseTreeFromRegex(regexTokens,pos+1))
+		  return RegexParserNode(OR,{std::move(res),std::move(*n)});
+		else
+		  return {};
 	      else
-		return {};
-	    else
-	      return res;
-	  }
+		return res;
+	    }
+      }
     
     return {};
   }
