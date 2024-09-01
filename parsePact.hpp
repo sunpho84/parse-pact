@@ -1105,7 +1105,7 @@ namespace pp::internal
   ///////////////////////////////////////////////////////////////
   
   /// Holds a node in the parse tree for regex
-  struct RegexParserNode
+  struct RegexParseTreeNode
   {
     /// Possible ypes of the node
     enum Type{OR,AND,OPT,MANY,NONZERO,CHAR,TOKEN};
@@ -1137,7 +1137,7 @@ namespace pp::internal
       {"TOKEN",0,'@'}};
     
     /// Subnodes of the present node
-    std::vector<RegexParserNode> subNodes;
+    std::vector<RegexParseTreeNode> subNodes;
     
     /// First char matched by the node
     char begChar;
@@ -1155,13 +1155,13 @@ namespace pp::internal
     bool nullable;
     
     /// Determine the first elements of the subtree that must match something
-    std::vector<RegexParserNode*> firsts;
+    std::vector<RegexParseTreeNode*> firsts;
     
     /// Determine the last elements of the subtree that must match something
-    std::vector<RegexParserNode*> lasts;
+    std::vector<RegexParseTreeNode*> lasts;
     
     /// Determine the following elements
-    std::vector<RegexParserNode*> follows;
+    std::vector<RegexParseTreeNode*> follows;
     
     /// Print the current node, and all subnodes iteratively, indenting more and more
     constexpr void printf(const int& indLv=0) const
@@ -1309,14 +1309,14 @@ namespace pp::internal
     }
     
     /// Forbids default construct of the node
-    RegexParserNode()=delete;
+    RegexParseTreeNode()=delete;
     
     /// Construct from type, subnodes, beging and past end char
-    constexpr RegexParserNode(const Type& type,
-			      std::vector<RegexParserNode>&& subNodes,
-			      const char begChar='\0',
-			      const char endChar='\0',
-			      const size_t tokId=0) :
+    constexpr RegexParseTreeNode(const Type& type,
+				  std::vector<RegexParseTreeNode>&& subNodes,
+				  const char begChar='\0',
+				  const char endChar='\0',
+				  const size_t tokId=0) :
       type(type),
       subNodes(subNodes),
       begChar(begChar),
@@ -1333,10 +1333,10 @@ namespace pp::internal
   /// Match two expressions joined by "|"
   ///
   /// Forward declaration
-  constexpr std::optional<RegexParserNode> matchAndParsePossiblyOrredExpr(StringMatcher& matchIn);
+  constexpr std::optional<RegexParseTreeNode> matchAndParsePossiblyOrredExpr(StringMatcher& matchIn);
   
   /// Matches a set of chars in []
-  constexpr std::optional<RegexParserNode> matchBracketExpr(StringMatcher& matchIn)
+  constexpr std::optional<RegexParseTreeNode> matchBracketExpr(StringMatcher& matchIn)
   {
     /// Rewinds if not matched
     auto undoer=
@@ -1433,17 +1433,17 @@ namespace pp::internal
 	    diagnostic("matched ]\n");
 	    
 	    /// Result to be returned, containing a nested list of OR nodes
-	    std::optional<RegexParserNode> res;
+	    std::optional<RegexParseTreeNode> res;
 	    
 	    matchableChars.onAllRanges([&res](const char& b,
 					      const char& e)
 	    {
 	      /// First create a detached node
 	      auto tmp=
-		RegexParserNode{RegexParserNode::Type::CHAR,{},b,e};
+		RegexParseTreeNode{RegexParseTreeNode::Type::CHAR,{},b,e};
 	      
 	      if(res)
-		res=RegexParserNode{RegexParserNode::Type::OR,{std::move(*res),std::move(tmp)}};
+		res=RegexParseTreeNode{RegexParseTreeNode::Type::OR,{std::move(*res),std::move(tmp)}};
 	      else
 		res=std::move(tmp);
 	    });
@@ -1456,14 +1456,14 @@ namespace pp::internal
   }
   
   /// Matches a subexpression
-  constexpr std::optional<RegexParserNode> matchSubExpr(StringMatcher& matchIn)
+  constexpr std::optional<RegexParseTreeNode> matchSubExpr(StringMatcher& matchIn)
   {
     /// Rewinds if not matched
     auto undoer=
       matchIn.beginTemptativeMatch("matchSubExpr",false);
     
     if((undoer.state=matchIn.matchChar('(')))
-      if(std::optional<RegexParserNode> s=matchAndParsePossiblyOrredExpr(matchIn))
+      if(std::optional<RegexParseTreeNode> s=matchAndParsePossiblyOrredExpr(matchIn))
 	{
 	  diagnostic("Looking at ')' at string: ",matchIn.ref,"\n");
 	  if((undoer.state=s and matchIn.matchChar(')')))
@@ -1474,32 +1474,31 @@ namespace pp::internal
     return {};
   }
   
-  
   /// Matches any char but '\0'
-  constexpr std::optional<RegexParserNode> matchDot(StringMatcher& matchIn)
+  constexpr std::optional<RegexParseTreeNode> matchDot(StringMatcher& matchIn)
   {
     if(matchIn.matchChar('.'))
-      return RegexParserNode{RegexParserNode::Type::CHAR,{},1,std::numeric_limits<char>::max()};
+      return RegexParseTreeNode{RegexParseTreeNode::Type::CHAR,{},1,std::numeric_limits<char>::max()};
     
     return {};
   }
   
   /// Match a char including possible escape
-  constexpr std::optional<RegexParserNode> matchAndParsePossiblyEscapedChar(StringMatcher& matchIn)
+  constexpr std::optional<RegexParseTreeNode> matchAndParsePossiblyEscapedChar(StringMatcher& matchIn)
   {
     if(const char c=matchIn.matchPossiblyEscapedCharNotIn("|*+?()"))
-      return RegexParserNode{RegexParserNode::Type::CHAR,{},c,(char)(c+1)};
+      return RegexParseTreeNode{RegexParseTreeNode::Type::CHAR,{},c,(char)(c+1)};
     
     return {};
   }
   
   /// Match an expression and possible postfix
-  constexpr std::optional<RegexParserNode> matchAndParseExprWithPossiblePostfix(StringMatcher& matchIn)
+  constexpr std::optional<RegexParseTreeNode> matchAndParseExprWithPossiblePostfix(StringMatcher& matchIn)
   {
-    using enum RegexParserNode::Type;
+    using enum RegexParseTreeNode::Type;
     
     /// Result to be returned
-    std::optional<RegexParserNode> m;
+    std::optional<RegexParseTreeNode> m;
     
     if(not (m=matchBracketExpr(matchIn)))
       if(not (m=matchSubExpr(matchIn)))
@@ -1508,35 +1507,35 @@ namespace pp::internal
     
     if(m)
       if(const char c=matchIn.matchAnyCharIn("+?*"))
-	m=RegexParserNode{(c=='+')?NONZERO:((c=='?')?OPT:MANY),{std::move(*m)}};
+	m=RegexParseTreeNode{(c=='+')?NONZERO:((c=='?')?OPT:MANY),{std::move(*m)}};
     
     return m;
   }
   
   /// Match one or two expressions
-  constexpr std::optional<RegexParserNode> matchAndParsePossiblyAndedExpr(StringMatcher& matchIn)
+  constexpr std::optional<RegexParseTreeNode> matchAndParsePossiblyAndedExpr(StringMatcher& matchIn)
   {
     /// First and possible only subexpression
-    std::optional<RegexParserNode> lhs=
+    std::optional<RegexParseTreeNode> lhs=
       matchAndParseExprWithPossiblePostfix(matchIn);
     
     if(lhs)
-      if(std::optional<RegexParserNode> rhs=matchAndParsePossiblyAndedExpr(matchIn))
-	return RegexParserNode{RegexParserNode::Type::AND,{std::move(*lhs),std::move(*rhs)}};
+      if(std::optional<RegexParseTreeNode> rhs=matchAndParsePossiblyAndedExpr(matchIn))
+	return RegexParseTreeNode{RegexParseTreeNode::Type::AND,{std::move(*lhs),std::move(*rhs)}};
     
     return lhs;
   }
   
   /// Match one or two expression, the second is optionally matched
-  constexpr std::optional<RegexParserNode> matchAndParsePossiblyOrredExpr(StringMatcher& matchIn)
+  constexpr std::optional<RegexParseTreeNode> matchAndParsePossiblyOrredExpr(StringMatcher& matchIn)
   {
     /// First and possible only subexpression
-    std::optional<RegexParserNode> lhs=
+    std::optional<RegexParseTreeNode> lhs=
       matchAndParsePossiblyAndedExpr(matchIn);
     
     if(auto undoer=matchIn.beginTemptativeMatch("orExprSecondPart",false);matchIn.matchChar('|'))
-      if(std::optional<RegexParserNode> rhs=matchAndParsePossiblyAndedExpr(matchIn);(undoer.state=rhs.has_value()))
-	return RegexParserNode{RegexParserNode::Type::OR,{std::move(*lhs),std::move(*rhs)}};
+      if(std::optional<RegexParseTreeNode> rhs=matchAndParsePossiblyAndedExpr(matchIn);(undoer.state=rhs.has_value()))
+	return RegexParseTreeNode{RegexParseTreeNode::Type::OR,{std::move(*lhs),std::move(*rhs)}};
     
     return lhs;
   }
@@ -1552,24 +1551,24 @@ namespace pp::internal
   };
   
   /// Gets the parse tree from a list of regex
-  constexpr std::optional<RegexParserNode> parseTreeFromRegex(const std::vector<RegexToken>& regexTokens,
+  constexpr std::optional<RegexParseTreeNode> parseTreeFromRegex(const std::vector<RegexToken>& regexTokens,
 							      const size_t pos=0)
   {
-    using enum RegexParserNode::Type;
+    using enum RegexParseTreeNode::Type;
     
     if(pos<regexTokens.size())
       {
 	diagnostic("Getting the parse tree of regex ",regexTokens[pos].str,"\n");
 	
-	if(StringMatcher match(regexTokens[pos].str);std::optional<RegexParserNode> t=matchAndParsePossiblyOrredExpr(match))
+	if(StringMatcher match(regexTokens[pos].str);std::optional<RegexParseTreeNode> t=matchAndParsePossiblyOrredExpr(match))
 	  if(t and match.ref.empty())
 	    {
 	      /// Result, to be returned if last to be matched
-	      RegexParserNode res(AND,{std::move(*t),{TOKEN,{},'\0','\0',regexTokens[pos].iSymbol}});
+	      RegexParseTreeNode res(AND,{std::move(*t),{TOKEN,{},'\0','\0',regexTokens[pos].iSymbol}});
 	      
 	      if(pos+1<regexTokens.size())
-		if(std::optional<RegexParserNode> n=parseTreeFromRegex(regexTokens,pos+1))
-		  return RegexParserNode(OR,{std::move(res),std::move(*n)});
+		if(std::optional<RegexParseTreeNode> n=parseTreeFromRegex(regexTokens,pos+1))
+		  return RegexParseTreeNode(OR,{std::move(res),std::move(*n)});
 		else
 		  return {};
 	      else
@@ -1712,13 +1711,13 @@ namespace pp::internal
     }
     
     /// Construct from parse tree
-    constexpr DynamicRegexParser(RegexParserNode& parseTree)
+    constexpr DynamicRegexParser(RegexParseTreeNode& parseTree)
     {
       createFromParseTree(parseTree);
     }
     
     /// Create from parse tree
-    constexpr void createFromParseTree(RegexParserNode& parseTree)
+    constexpr void createFromParseTree(RegexParseTreeNode& parseTree)
     {
       parseTree.setAllIds();
       parseTree.setNullable();
@@ -1734,7 +1733,7 @@ namespace pp::internal
       /// Label of the dState, given by the set of RegexParserNodes
       /// which the dState represents
       using DStateLabel=
-	std::vector<RegexParserNode*>;
+	std::vector<RegexParseTreeNode*>;
       
       /// Labels of the dState, set at the beginning to the firsts of the main node
       std::vector<DStateLabel> dStateLabels=
@@ -1773,7 +1772,7 @@ namespace pp::internal
 	    /// List of the recognized tokens
 	    std::vector<size_t> recogTokens;
 	    for(const auto& f : dStateLabels[iDState])
-	      if(f->type==RegexParserNode::TOKEN)
+	      if(f->type==RegexParseTreeNode::TOKEN)
 		recogTokens.push_back(f->tokId);
 	    
 	    /// Check if two dStates differ, for some reason the std::vector comparison is not working with clang
@@ -1900,7 +1899,7 @@ namespace pp::internal
   constexpr auto createParserFromRegex(const std::vector<RegexToken>& tokens)
   {
     /// Creates the parse tree
-    std::optional<RegexParserNode> parseTree=
+    std::optional<RegexParseTreeNode> parseTree=
       parseTreeFromRegex(tokens);
     
     if(not parseTree)
