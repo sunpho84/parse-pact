@@ -576,83 +576,7 @@ namespace pp::internal
   };
   
   /////////////////////////////////////////////////////////////////
-  //////////////////// Tempatative actions ////////////////////////
-  /////////////////////////////////////////////////////////////////
-  
-  /// Namespace for tempative match functionalities
-  namespace temptative
-  {
-    /// State of an action
-    enum State : bool {UNACCEPTED,ACCEPTED};
-    
-    /// Store the number of temptative actions, to properly indent the diagnostic
-    inline size_t nNestedActions=0;
-    
-    /// Print to terminal if not evaluated at compile time, adding proper indentation
-    template <typename...Args>
-    constexpr void diagnostic(Args&&...args)
-    {
-      if(not std::is_constant_evaluated())
-      	for(size_t i=0;i<temptative::nNestedActions;i++)
-	  std::cout<<"\t";
-      pp::internal::diagnostic(std::forward<Args>(args)...);
-    }
-    
-    /// When destroyed, performs the action unless the action is accepted
-    template <typename F>
-    struct Action
-    {
-      using enum State;
-      
-      /// Action performed at destruction if not accepted
-      F undoer;
-      
-      /// State whether the action is accepted
-      bool state;
-      
-      /// Construct taking a funtion
-      constexpr Action(const char* descr,
-		       F&& undoer,
-		       const bool& constructionState=UNACCEPTED) :
-	undoer(undoer),
-	state(constructionState)
-      {
-	diagnostic("Starting ",descr,"\n");
-	if(not std::is_constant_evaluated())
-	  nNestedActions++;
-      }
-      
-      /// Unaccept the action
-      constexpr void unaccept()
-      {
-	state=UNACCEPTED;
-      }
-      
-      /// Accept the action
-      constexpr void accept()
-      {
-	state=ACCEPTED;
-      }
-      
-      /// Destructor, undoing the action if not accepted
-      constexpr ~Action()
-      {
-	if(state==UNACCEPTED)
-	  undoer();
-	if(not std::is_constant_evaluated())
-	  nNestedActions--;
-      }
-      
-      /// Cast to bool, returning the state
-      constexpr operator bool() const
-      {
-	return (bool)state;
-      }
-    };
-  }
-  
-  /////////////////////////////////////////////////////////////////
-  ////////////////////// String matching //////////////////////////
+  ///////////////////// Matches a single char /////////////////////
   /////////////////////////////////////////////////////////////////
   
   ///Matches a single char condition
@@ -662,7 +586,7 @@ namespace pp::internal
     return c==m;
   }
   
-  ///Matches either char of a string
+  ///Matches either char of a null-terminated string
   constexpr bool charMultiMatches(const char& c,
 				  const char* str)
   {
@@ -689,6 +613,21 @@ namespace pp::internal
     {
       return (charMultiMatches(c,cond) or ...);
     },conds);
+  }
+  
+  /// Return the escaped counterpart of the escaped part in a few cases, or the char itself
+  constexpr char maybeEscape(const char& c)
+  {
+    switch (c)
+      {
+      case 'b':return '\b';
+      case 'n':return '\n';
+      case 'f':return '\f';
+      case 'r':return '\r';
+      case 't':return '\t';
+      }
+    
+    return c;
   }
   
   /// Collect all info on char classes
@@ -770,20 +709,85 @@ namespace pp::internal
     }
   };
   
-  /// Return the escaped counterpart of the escaped part in a few cases, or the char itself
-  constexpr char maybeEscape(const char& c)
+  /////////////////////////////////////////////////////////////////
+  /////////////////// Temptatative actions ////////////////////////
+  /////////////////////////////////////////////////////////////////
+  
+  /// Namespace for tempative match functionalities
+  namespace temptative
   {
-    switch (c)
-      {
-      case 'b':return '\b';
-      case 'n':return '\n';
-      case 'f':return '\f';
-      case 'r':return '\r';
-      case 't':return '\t';
-      }
+    /// State of an action
+    enum State : bool {UNACCEPTED,ACCEPTED};
     
-    return c;
+    /// Store the number of temptative actions, to properly indent the diagnostic
+    inline size_t nNestedActions=0;
+    
+    /// Print to terminal if not evaluated at compile time, adding proper indentation
+    template <typename...Args>
+    constexpr void diagnostic(Args&&...args)
+    {
+      if(not std::is_constant_evaluated())
+      	for(size_t i=0;i<temptative::nNestedActions;i++)
+	  std::cout<<"\t";
+      pp::internal::diagnostic(std::forward<Args>(args)...);
+    }
+    
+    /// When destroyed, performs the action unless the action is accepted
+    template <typename F>
+    struct Action
+    {
+      using enum State;
+      
+      /// Action performed at destruction if not accepted
+      F undoer;
+      
+      /// State whether the action is accepted
+      bool state;
+      
+      /// Construct taking a funtion
+      constexpr Action(const char* descr,
+		       F&& undoer,
+		       const bool& constructionState=UNACCEPTED) :
+	undoer(undoer),
+	state(constructionState)
+      {
+	diagnostic("Starting ",descr,"\n");
+	if(not std::is_constant_evaluated())
+	  nNestedActions++;
+      }
+      
+      /// Unaccept the action
+      constexpr void unaccept()
+      {
+	state=UNACCEPTED;
+      }
+      
+      /// Accept the action
+      constexpr void accept()
+      {
+	state=ACCEPTED;
+      }
+      
+      /// Destructor, undoing the action if not accepted
+      constexpr ~Action()
+      {
+	if(state==UNACCEPTED)
+	  undoer();
+	if(not std::is_constant_evaluated())
+	  nNestedActions--;
+      }
+      
+      /// Cast to bool, returning the state
+      constexpr operator bool() const
+      {
+	return (bool)state;
+      }
+    };
   }
+  
+  /////////////////////////////////////////////////////////////////
+  /////////////////////// Matches strings /////////////////////////
+  /////////////////////////////////////////////////////////////////
   
   /// Holds string to be matched, provides matching functionalities,
   /// and holds the matching status
@@ -3691,5 +3695,5 @@ namespace pp
     constexpr std::string_view str=strProvider();
     
     return createGrammar<estimateGrammarSize(str)>(str);
-  } 
+  }
 }
