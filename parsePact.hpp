@@ -1334,6 +1334,9 @@ namespace pp::internal
   //////////////// Parse a regex into a parse tree ////////////////
   /////////////////////////////////////////////////////////////////
   
+  /// Associate the regex to be matched and the index of the token to be returned
+  using RegexTokenPair=std::pair<std::string_view,size_t>;
+  
   /// Builds a Regex Parse Tree from a regex
   struct RegexParseTreeBuilder
   {
@@ -1566,40 +1569,37 @@ namespace pp::internal
       else
 	return {};
     }
-  };
-  
-  /////////////////////////////////////////////////////////////////
-  
-  /// Associate the regex to be matched and the index of the token to be returned
-  using RegexTokenPair=std::pair<std::string_view,size_t>;
-  
-  /// Gets the parse tree from a list of regex
-  constexpr std::optional<RegexParseTreeNode> parseTreeFromRegexTokenPairs(const std::vector<RegexTokenPair>& regexTokenPairs,
-									   const size_t pos=0)
-  {
-    using enum RegexParseTreeNode::Type;
     
-    if(pos<regexTokenPairs.size())
-      {
-	diagnostic("Getting the parse tree of regex ",regexTokenPairs[pos].first,"\n");
-	
-	if(std::optional<RegexParseTreeNode> t=RegexParseTreeBuilder::parseRegex(regexTokenPairs[pos].first))
+    /// Gets the parse tree from a list of regex
+    static constexpr std::optional<RegexParseTreeNode> parseRegexTokenPairs(const std::vector<RegexTokenPair>& regexTokenPairs,
+									    const size_t pos=0)
+    {
+      using enum RegexParseTreeNode::Type;
+      
+      if(pos<regexTokenPairs.size())
+	{
+	  diagnostic("Getting the parse tree of regex ",regexTokenPairs[pos].first,"\n");
+	  
+	  if(std::optional<RegexParseTreeNode> t=RegexParseTreeBuilder::parseRegex(regexTokenPairs[pos].first))
 	    {
 	      /// Result, to be returned if last to be matched
 	      RegexParseTreeNode res(AND,{std::move(*t),{TOKEN,{},'\0','\0',regexTokenPairs[pos].second}});
 	      
 	      if(pos+1<regexTokenPairs.size())
-		if(std::optional<RegexParseTreeNode> n=parseTreeFromRegexTokenPairs(regexTokenPairs,pos+1))
+		if(std::optional<RegexParseTreeNode> n=parseRegexTokenPairs(regexTokenPairs,pos+1))
 		  return RegexParseTreeNode(OR,{std::move(res),std::move(*n)});
 		else
 		  return {};
 	      else
 		return res;
 	    }
-      }
-    
-    return {};
-  }
+	}
+      
+      return {};
+    }
+  };
+  
+  /////////////////////////////////////////////////////////////////
   
   /// Transition in the state machine for the regex parsing
   struct RegexMachineTransition
@@ -1922,7 +1922,7 @@ namespace pp::internal
   {
     /// Creates the parse tree
     std::optional<RegexParseTreeNode> parseTree=
-      parseTreeFromRegexTokenPairs(tokens);
+      RegexParseTreeBuilder::parseRegexTokenPairs(tokens);
     
     if(not parseTree)
       errorEmitter("Unable to parse the regex");
