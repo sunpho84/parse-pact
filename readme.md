@@ -1,15 +1,25 @@
 # Provide Autonomous Regex Scanners & Entire Parsers At Compile Time
 
-## Aim of the project 
-Providing a parser generator which produce a `lalr(1)` parser at
-compile time. This will allow to parse expressions at compile time.
+Single header `C++-20` library to:
+- generate `lexer` (as for the "REGular EXpression Scanner" part of the name) 
+- create full `parser` given a `BNF` grammar
+lexer and parser can be generated (and even used!) even at compile time!
 
-## Style 
-The project is written in plain `C++-20`, has no dependency, and the
-aim is to put everything in a single file. 
+## Key features
+- __Single header__: immediate to streamline in your project:
+
+```c++
+#include <parsePact.hpp>
+
+const auto parser=pp::generateParser(" ... grammar...");
+parser.parse("...text to be parsed");
+```
+- Plain standard `C++-20`, no extra dependency
+- Supports `lalr(1)` grammar
+- Can parse expressions at compile time! Some funny example will come here.
 
 **Status**: the grammar is completely created, parsing is still in
-work, no action is issued. Lexer do not track position yet.
+progress, no action is issued. Lexer do not track position yet.
 
 **Based on:** The project is based on [lalr parser
 generator](https://github.com/cwbaker/lalr/) by Charles Baker.
