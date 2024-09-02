@@ -18,7 +18,7 @@ constexpr auto parser=pp::generateParserCT([](){return " ... grammar...";});
 - Plain standard `C++-20`, no extra dependency
 - Supports `lalr(1)` grammar
 - Can parse expressions at compile time!
-```c++20
+```c++
 constexpr auto parseResult=parser.parse([](){return "...again with some gymnastic";});
 ```
 
