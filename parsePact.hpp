@@ -1121,7 +1121,7 @@ namespace pp::internal
       /// Number of subnodes
       const size_t nSubNodes;
       
-      /// Symbol representing the node
+      /// Symbol representing the node, e.g | for or, & and, etc
       const char symbol;
     };
     
@@ -1570,33 +1570,26 @@ namespace pp::internal
   
   /////////////////////////////////////////////////////////////////
   
-  /// Associate the regex to be matched and the index of the symbol to be passed
-  struct RegexToken
-  {
-    /// Regex to be matched
-    std::string_view str;
-    
-    /// Index of the recognized symbol
-    size_t iSymbol;
-  };
+  /// Associate the regex to be matched and the index of the token to be returned
+  using RegexTokenPair=std::pair<std::string_view,size_t>;
   
   /// Gets the parse tree from a list of regex
-  constexpr std::optional<RegexParseTreeNode> parseTreeFromRegex(const std::vector<RegexToken>& regexTokens,
-								 const size_t pos=0)
+  constexpr std::optional<RegexParseTreeNode> parseTreeFromRegexTokenPairs(const std::vector<RegexTokenPair>& regexTokenPairs,
+									   const size_t pos=0)
   {
     using enum RegexParseTreeNode::Type;
     
-    if(pos<regexTokens.size())
+    if(pos<regexTokenPairs.size())
       {
-	diagnostic("Getting the parse tree of regex ",regexTokens[pos].str,"\n");
+	diagnostic("Getting the parse tree of regex ",regexTokenPairs[pos].first,"\n");
 	
-	if(std::optional<RegexParseTreeNode> t=RegexParseTreeBuilder::parseRegex(regexTokens[pos].str))
+	if(std::optional<RegexParseTreeNode> t=RegexParseTreeBuilder::parseRegex(regexTokenPairs[pos].first))
 	    {
 	      /// Result, to be returned if last to be matched
-	      RegexParseTreeNode res(AND,{std::move(*t),{TOKEN,{},'\0','\0',regexTokens[pos].iSymbol}});
+	      RegexParseTreeNode res(AND,{std::move(*t),{TOKEN,{},'\0','\0',regexTokenPairs[pos].second}});
 	      
-	      if(pos+1<regexTokens.size())
-		if(std::optional<RegexParseTreeNode> n=parseTreeFromRegex(regexTokens,pos+1))
+	      if(pos+1<regexTokenPairs.size())
+		if(std::optional<RegexParseTreeNode> n=parseTreeFromRegexTokenPairs(regexTokenPairs,pos+1))
 		  return RegexParseTreeNode(OR,{std::move(res),std::move(*n)});
 		else
 		  return {};
@@ -1925,11 +1918,11 @@ namespace pp::internal
   
   /// Create parser from regexp
   template <RegexMachineSpecs RPS=RegexMachineSpecs{}>
-  constexpr auto createParserFromRegex(const std::vector<RegexToken>& tokens)
+  constexpr auto createParserFromRegex(const std::vector<RegexTokenPair>& tokens)
   {
     /// Creates the parse tree
     std::optional<RegexParseTreeNode> parseTree=
-      parseTreeFromRegex(tokens);
+      parseTreeFromRegexTokenPairs(tokens);
     
     if(not parseTree)
       errorEmitter("Unable to parse the regex");
@@ -1943,9 +1936,9 @@ namespace pp::internal
   /// Prepare a vector with tokens id starting from a variadic list
   template <typename...T>
   requires(std::is_same_v<char,T> and ...)
-  constexpr std::vector<RegexToken> createRegexTokensFromStringList(const T*...str)
+  constexpr std::vector<RegexTokenPair> createRegexTokensFromStringList(const T*...str)
   {
-    std::vector<RegexToken> regexTokens;
+    std::vector<RegexTokenPair> regexTokens;
     
     for(size_t i=0;const char* const& s : {str...})
       regexTokens.emplace_back(s,i++);
@@ -1963,7 +1956,7 @@ namespace pp::internal
   }
   
   /// Estimates the parser size
-  constexpr auto estimateRegexParserSize(const std::vector<RegexToken>& regexTokens)
+  constexpr auto estimateRegexParserSize(const std::vector<RegexTokenPair>& regexTokens)
   {
     return createParserFromRegex(regexTokens).getSizes();
   }
@@ -2378,7 +2371,7 @@ namespace pp::internal
     
     std::vector<GrammarProduction> productions;
     
-    std::vector<RegexToken> whitespaceTokens;
+    std::vector<std::string_view> whitespaceRegexList;
     
     std::vector<GrammarItem> items;
     
@@ -2597,7 +2590,7 @@ namespace pp::internal
 	      auto l=matchin.matchRegex();
 	      if(not l.empty())
 		{
-		  whitespaceTokens.emplace_back(l,iWhitespaceSymbol);
+		  whitespaceRegexList.emplace_back(l);
 		  diagnostic("Matched regex ",l,"\n");
 		  matchin.matchWhiteSpaceOrComments();
 		}
@@ -3406,17 +3399,21 @@ namespace pp::internal
     /// Generate the regex parser
     constexpr void generateRegexParser()
     {
-      std::vector<RegexToken> tokens=whitespaceTokens;
+      /// List of regex paired to the token to be returned
+      std::vector<RegexTokenPair> regexTokenPairs;
+      
+      for(const std::string_view& w : whitespaceRegexList)
+	regexTokenPairs.emplace_back(w,iWhitespaceSymbol);
       
       for(size_t iSymbol=0;iSymbol<symbols.size();iSymbol++)
 	if(symbols[iSymbol].type==GrammarSymbol::Type::TERMINAL_SYMBOL)
-	  tokens.emplace_back(symbols[iSymbol].name,iSymbol);
+	  regexTokenPairs.emplace_back(symbols[iSymbol].name,iSymbol);
       
-      diagnostic("List of TERMINAL and whitespaces regex recognized by the grammar:\n");
-      for(const auto& [name,iToken] : tokens)
+      diagnostic("List of TERMINAL and whitespaces regex recognized by the grammar, and corresponding token id:\n");
+      for(const auto& [name,iToken] : regexTokenPairs)
 	diagnostic("   ",name," -> ",iToken,"\n");
       
-      regexParser=createParserFromRegex(tokens);
+      regexParser=createParserFromRegex(regexTokenPairs);
     }
     
     constexpr Grammar(const std::string_view& str) :
