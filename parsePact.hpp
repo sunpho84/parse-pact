@@ -2,7 +2,7 @@
 #define _PARSEPACT_HPP
 
 /*
- * ParsePact - Provides Autonomous Regex Scanners & Entire Parsers At Compile Time
+ * Parse Pact - Provides Autonomous Regex Scanners & Entire Parsers At Compile Time
  *
  * Hosted at: https://github.com/sunpho84/parse-pact
  *
