@@ -66,6 +66,21 @@ namespace pp::internal
   //////// Basic helpful types to hold constexpr data /////////////
   /////////////////////////////////////////////////////////////////
   
+  /// Allows a C-string to be used as template argument
+  template <size_t N>
+  struct CtString
+  {
+    /// Stored string
+    char str[N];
+    
+    /// Creates the CtSring copying the passed string
+    inline constexpr CtString(char const(&arr)[N])
+    {
+      for(size_t i=0;i<N;i++)
+	this->str[i]=arr[i];
+    }
+  };
+  
   /// Custom bitset
   struct BitSet
   {
@@ -1990,9 +2005,19 @@ namespace pp::internal
   /// Estimates the compile time lexer size for a list of regexes
   template <typename...T>
   requires(std::is_same_v<char,T> and ...)
-  constexpr auto estimateRegexLexerSize(const T*...str)
+  constexpr auto estimateLexerSize(const T*...str)
   {
     return estimateLexerSize(createRegexTokensFromStringList(str...));
+  }
+  
+  /// Create lexer from regexp, at constant time
+  template <CtString...str>
+    constexpr auto createLexerFromRegex()
+  {
+    constexpr LexerMachineSpecs LPS=
+      estimateLexerSize(str.str...);
+    
+    return createLexerFromRegex<LPS>(str.str...);
   }
   
   /////////////////////////////////////////////////////////////////
@@ -3740,12 +3765,14 @@ namespace pp
     return createGrammar(str).getSizes();
   }
   
-  /// Create grammar from string provider, this way constexprness of the string survives
-  constexpr auto createConstexprGrammar(const auto strProvider)
+  /// Create grammar taking the grammar as template parameter
+  template <CtString str>
+  constexpr auto createGrammar()
   {
-    constexpr std::string_view str=strProvider();
+    constexpr GrammarSpecs GS=
+      estimateGrammarSize(str.str);
     
-    return createGrammar<estimateGrammarSize(str)>(str);
+    return createGrammar<GS>(str.str);
   }
 }
 
