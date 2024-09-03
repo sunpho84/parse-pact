@@ -1,4 +1,5 @@
-# Parse Pact
+# Parse Pact: a compact parser generator
+
 ## Provides Autonomous Regex Scanners & Entire Parsers At Compile Time
 
 Single header `C++-20` library to generate `lexer` and `parser` (even) at compile time!
