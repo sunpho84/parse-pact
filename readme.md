@@ -2,7 +2,7 @@
 
 ## Provides Autonomous Regex Scanners & Entire Parsers At Compile Time
 
-Single header `C++-20` library to generate `lexer` and `parser` (even) at compile time!
+Single header `C++-20` library to generate `lexer` and `parser`, at compile time or runtime!
 
 ## Key features
 - __Single header__: immediate to streamline in your project:
@@ -13,15 +13,15 @@ Single header `C++-20` library to generate `lexer` and `parser` (even) at compil
 const auto parser=pp::generateParser(" ... grammar...");
 parser.parse("...text to be parsed");
 ```
-- Can generate the parser at compile time (at the moment requires a little bit of gymnastic):
+- Can generate the parser at compile time:
 ```c++
-constexpr auto parser=pp::generateParserCT([](){return " ... grammar...";});
+constexpr auto parser=pp::generateParser<" ... grammar...">();
 ```
 - Plain standard `C++-20`, no extra dependency
 - Supports `lalr(1)` grammar
 - Can parse expressions at compile time!
 ```c++
-constexpr auto parseResult=parser.parse([](){return "...again with some gymnastic";});
+constexpr auto parseResult=parser.parse<"...text to be parsed">();
 ```
 
 **Status**: the grammar is completely created, parsing is still in

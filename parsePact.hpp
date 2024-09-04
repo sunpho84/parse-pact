@@ -1641,9 +1641,11 @@ namespace pp::internal
   };
   
   /////////////////////////////////////////////////////////////////
+  /////////////////////// Regex Matcher////////////////////////////
+  /////////////////////////////////////////////////////////////////
   
-  /// Transition in the state machine describing the lexer
-  struct LexerMachineTransition
+  /// Transition in the state machine describing the regex matcher
+  struct RegexMatcherDStateTransition
   {
     /// State from which to move
     size_t iDStateFrom;
@@ -1671,8 +1673,8 @@ namespace pp::internal
     }
   };
   
-  /// Specifications for the DState
-  struct DState
+  /// States of the Deterministic Finite Automa describing the regex matcher
+  struct RegexMatcherDState
   {
     /// Index of the first transition for the given state
     size_t transitionsBegin;
@@ -1684,10 +1686,10 @@ namespace pp::internal
     size_t iToken;
   };
   
-  /// Specifications of the machine
-  struct LexerMachineSpecs
+  /// Sizes of the machine defining the refex matcher
+  struct RegexMatcherMachineSpecs
   {
-    /// Number of dStates
+    /// Number of DStates
     const size_t nDStates;
     
     /// Number of transitions
@@ -1700,36 +1702,38 @@ namespace pp::internal
     }
   };
   
-  /// Result of lexing
-  struct LexingResult
+  /// Result of regex matching
+  struct RegexMatchingResult
   {
     /// Matched string
-    std::string_view lexeme;
+    std::string_view matchedString;
     
     /// Recognized token
     size_t iToken;
   };
   
-  /// Base functionality of the lexer
+  /// Base functionality of the regex matcher
   template <typename T>
-  struct BaseLexer :
+  struct BaseRegexMatcher :
     StaticPolymorphic<T>
   {
     /// Import the static polymorphism cast
     using StaticPolymorphic<T>::self;
     
-    /// Scan a string
-    constexpr std::optional<LexingResult> scan(std::string_view v) const
+    /// Match a string
+    constexpr std::optional<RegexMatchingResult> match(std::string_view str) const
     {
-      const auto scanBegin=v.begin();
+      /// Original view on the string
+      const auto oriStr=str.begin();
       
+      /// Start dState
       size_t dState=0;
       
       while(dState<self().dStates.size())
 	{
 	  diagnostic("\nEntering dState ",dState,"\n");
 	  const char& c=
-	    v.empty()?'\0':v.front();
+	    str.empty()?'\0':str.front();
 	  
 	  diagnostic("trying to match char: \'",c,"\'\n");
 	  
@@ -1745,36 +1749,83 @@ namespace pp::internal
 	    {
 	      dState=trans->nextDState;
 	      diagnostic("matched ",c," with trans ",trans->iDStateFrom," ",rangeDescribe(trans->beg,trans->end),", going to dState ",dState,"\n");
-	      v.remove_prefix(1);
+	      str.remove_prefix(1);
 	    }
 	  else
 	    if(self().dStates[dState].accepting)
-	      return LexingResult{std::string_view{scanBegin,v.begin()},self().dStates[dState].iToken};
+	      return RegexMatchingResult{std::string_view{oriStr,str.begin()},self().dStates[dState].iToken};
 	    else
 	      dState=self().dStates.size();
 	}
       
       return {};
     }
+    
+    /// Match a string - alternative syntax which work only with compile-time string, included for consistency
+    template <CtString str>
+    constexpr std::optional<RegexMatchingResult> match() const
+    {
+      return match(str.str);
+    }
+    
+    /// Break a string into tokens - do not use directly, use through the Tokenizer wrapper
+    template <size_t N=0>
+    constexpr auto _tokenize(std::string_view v) const
+    {
+      if constexpr(N==0)
+	{
+	  std::vector<RegexMatchingResult> res;
+	  
+	  bool scanned;
+	  
+	  do
+	    {
+	      auto s=match(v);
+	      scanned=(bool)s;
+	      
+	      if(scanned)
+		{
+		  res.push_back(*s);
+		  v.remove_prefix(s->matchedString.length());
+		}
+	      else
+		errorEmitter("Unable to parse");
+	    }
+	  while(scanned and not v.empty());
+	  
+	  return res;
+	}
+      else
+	{
+	  std::array<RegexMatchingResult,N> res;
+	  
+	  const std::vector<RegexMatchingResult> t=_tokenize(v);
+	  
+	  for(size_t i=0;i<N and i<v.size();i++)
+	    res[i]=t[i];
+	  
+	  return res;
+	}
+    }
   };
   
-  /// Dynamic lexer
-  struct Lexer :
-    BaseLexer<Lexer>
+  /// Dynamic regex matcher
+  struct RegexMatcher :
+    BaseRegexMatcher<RegexMatcher>
   {
     /// States of the DFA
-    std::vector<DState> dStates;
+    std::vector<RegexMatcherDState> dStates;
     
     /// Transitions among the states of the DFA
-    std::vector<LexerMachineTransition> transitions;
+    std::vector<RegexMatcherDStateTransition> transitions;
     
     /// Default constructor
-    constexpr Lexer()
+    constexpr RegexMatcher()
     {
     }
     
     /// Construct from parse tree
-    constexpr Lexer(RegexParseTreeNode& parseTree)
+    constexpr RegexMatcher(RegexParseTreeNode& parseTree)
     {
       createFromParseTree(parseTree);
     }
@@ -1884,7 +1935,7 @@ namespace pp::internal
 	}
       
       /// Allocates the dStates
-      dStates.resize(dStateLabels.size(),DState{.accepting=false,.iToken=0});
+      dStates.resize(dStateLabels.size(),RegexMatcherDState{.accepting=false,.iToken=0});
       
       // Count the number of transitions per dState
       std::vector<size_t> nTransitionsPerDState(dStates.size());
@@ -1894,7 +1945,7 @@ namespace pp::internal
       // Sets the beginning of the transitions for each dState
       for(size_t sum=0,iDState=0;iDState<dStates.size();iDState++)
 	{
-	  DState& dState=
+	  RegexMatcherDState& dState=
 	    dStates[iDState];
 	  
 	  dState.transitionsBegin=sum;
@@ -1926,25 +1977,25 @@ namespace pp::internal
     }
     
     /// Gets the parameters needed to build the constexpr lexer
-    constexpr LexerMachineSpecs getSizes() const
+    constexpr RegexMatcherMachineSpecs getSizes() const
     {
       return {.nDStates=dStates.size(),.nTransitions=transitions.size()};
     }
   };
   
-  /// Lexer storing the machine in fixed size tables
-  template <LexerMachineSpecs Specs>
-  struct LexerCT :
-    BaseLexer<LexerCT<Specs>>
+  /// Regex matcher storing the machine in fixed size tables
+  template <RegexMatcherMachineSpecs Specs>
+  struct RegexMatcherCT :
+    BaseRegexMatcher<RegexMatcherCT<Specs>>
   {
     /// States of the machine
-    std::array<DState,Specs.nDStates> dStates;
+    std::array<RegexMatcherDState,Specs.nDStates> dStates;
     
     /// Transitions among states
-    std::array<LexerMachineTransition,Specs.nTransitions> transitions;
+    std::array<RegexMatcherDStateTransition,Specs.nTransitions> transitions;
     
     /// Create from dynamic-sized lexer
-    constexpr LexerCT(const Lexer& oth)
+    constexpr RegexMatcherCT(const RegexMatcher& oth)
     {
       for(size_t i=0;i<Specs.nDStates;i++)
 	this->dStates[i]=oth.dStates[i];
@@ -1954,12 +2005,12 @@ namespace pp::internal
     }
     
     /// Default constructor
-    constexpr LexerCT()=default;
+    constexpr RegexMatcherCT()=default;
   };
   
-  /// Create lexer from regexp
-  template <LexerMachineSpecs LPS=LexerMachineSpecs{}>
-  constexpr auto createLexerFromRegexTokens(const std::vector<RegexTokenPair>& tokens)
+  /// Create regex matcher from regex tokens
+  template <RegexMatcherMachineSpecs RMMS=RegexMatcherMachineSpecs{}>
+  constexpr auto createRegexMatcher(const std::vector<RegexTokenPair>& tokens)
   {
     /// Creates the parse tree
     std::optional<RegexParseTreeNode> parseTree=
@@ -1968,10 +2019,10 @@ namespace pp::internal
     if(not parseTree)
       errorEmitter("Unable to parse the regex");
     
-    if constexpr(LPS.isNull())
-      return Lexer(*parseTree);
+    if constexpr(RMMS.isNull())
+      return RegexMatcher(*parseTree);
     else
-      return LexerCT<LPS>(*parseTree);
+      return RegexMatcherCT<RMMS>(*parseTree);
   }
   
   /// Prepare a vector with tokens id starting from a variadic list
@@ -1987,38 +2038,70 @@ namespace pp::internal
     return regexTokens;
   }
   
-  /// Create lexer from regexp
-  template <LexerMachineSpecs LPS=LexerMachineSpecs{},
+  /// Create regex matcher from string
+  template <RegexMatcherMachineSpecs RMMS=RegexMatcherMachineSpecs{},
     typename...T>
     requires(std::is_same_v<char,T> and ...)
-    constexpr auto createLexerFromRegex(const T*...str)
+    constexpr auto createRegexMatcher(const T*...str)
   {
-    return createLexerFromRegexTokens<LPS>(createRegexTokensFromStringList(str...));
+    return createRegexMatcher<RMMS>(createRegexTokensFromStringList(str...));
   }
   
-  /// Estimates the compile time lexer size for a regex-token pair set
-  constexpr auto estimateLexerSize(const std::vector<RegexTokenPair>& regexTokens)
+  /// Estimates the compile time regex matcher size for a regex-token pair set
+  constexpr RegexMatcherMachineSpecs estimateRegexMatcherSize(const std::vector<RegexTokenPair>& regexTokens)
   {
-    return createLexerFromRegexTokens(regexTokens).getSizes();
+    return createRegexMatcher(regexTokens).getSizes();
   }
   
-  /// Estimates the compile time lexer size for a list of regexes
+  /// Estimates the compile time regex matcher size for a list of regexes
   template <typename...T>
   requires(std::is_same_v<char,T> and ...)
-  constexpr auto estimateLexerSize(const T*...str)
+  constexpr RegexMatcherMachineSpecs estimateRegexMatcherSize(const T*...str)
   {
-    return estimateLexerSize(createRegexTokensFromStringList(str...));
+    return estimateRegexMatcherSize(createRegexTokensFromStringList(str...));
   }
   
-  /// Create lexer from regexp, at constant time
+  /// Create regex matcher from regexp, at constant time
   template <CtString...str>
-    constexpr auto createLexerFromRegex()
+    constexpr auto createRegexMatcher()
   {
-    constexpr LexerMachineSpecs LPS=
-      estimateLexerSize(str.str...);
+    constexpr RegexMatcherMachineSpecs RMMS=
+      estimateRegexMatcherSize(str.str...);
     
-    return createLexerFromRegex<LPS>(str.str...);
+    return createRegexMatcher<RMMS>(str.str...);
   }
+  
+  /////////////////////////////////////////////////////////////////
+  
+  struct Tokenizer
+  {
+    RegexMatcher regexMatcher;
+    
+    constexpr auto tokenize(const std::string_view& v) const
+    {
+      return regexMatcher._tokenize(v);
+    }
+  };
+
+  template <RegexMatcherCT RegexMatcher>
+  struct TokenizerCT
+  {
+    /// Estimates the compile-time number of tokens
+    template <CtString str>
+    static constexpr size_t estimateNTokens()
+    {
+      return RegexMatcher._tokenize(str.str).size();
+    }
+    
+    /// Break a string into tokens
+    template <CtString str>
+    constexpr auto tokenize()
+    {
+      constexpr size_t N=estimateNTokens<str>();
+      
+      return RegexMatcher.template _tokenize<N>(str.str);
+    }
+  };
   
   /////////////////////////////////////////////////////////////////
   
@@ -2379,7 +2462,7 @@ namespace pp::internal
     
     const Stack2DVectorPars stateTransitionsPars;
     
-    const LexerMachineSpecs regexMachinePars;
+    const RegexMatcherMachineSpecs regexMachinePars;
     
     /// Detects if the grammar is empty
     constexpr bool isNull() const
@@ -2432,7 +2515,7 @@ namespace pp::internal
     
     std::vector<Lookahead> lookaheads;
     
-    Lexer regexParser;
+    RegexMatcher regexParser;
     
     /// Describes a production
     constexpr inline std::string describe(const GrammarProduction& production) const
@@ -3464,7 +3547,7 @@ namespace pp::internal
       for(const auto& [name,iToken] : regexTokenPairs)
 	diagnostic("   ",name," -> ",iToken,"\n");
       
-      regexParser=createLexerFromRegexTokens(regexTokenPairs);
+      regexParser=createRegexMatcher(regexTokenPairs);
     }
     
     constexpr Grammar(const std::string_view& str) :
@@ -3543,7 +3626,7 @@ namespace pp::internal
     /// applied (if reduce)
     Stack2DVector<GrammarTransition,Specs.stateTransitionsPars> stateTransitionsData;
     
-    LexerCT<Specs.regexMachinePars> regexParser;
+    RegexMatcherCT<Specs.regexMachinePars> regexParser;
     
     static_assert(Specs.stateTransitionsPars.nRows==Specs.stateItemsPars.nRows,"number of rows for stateTransitions and stateItems do not match");
     
