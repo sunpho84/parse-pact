@@ -1813,39 +1813,38 @@ namespace pp::internal
     template <size_t N=0>
     constexpr auto _tokenize(std::string_view v) const
     {
-      if constexpr(N==0)
+      /// Resulting matched regex
+      std::vector<RegexMatchingResult> res;
+      
+      /// Holds current state
+      bool scanned;
+      
+      do
 	{
-	  std::vector<RegexMatchingResult> res;
+	  auto s=match(v);
+	  scanned=(bool)s;
 	  
-	  bool scanned;
-	  
-	  do
+	  if(scanned)
 	    {
-	      auto s=match(v);
-	      scanned=(bool)s;
-	      
-	      if(scanned)
-		{
-		  res.push_back(*s);
-		  v.remove_prefix(s->matchedString.length());
-		}
-	      else
-		errorEmitter("Unable to parse");
+	      res.push_back(*s);
+	      v.remove_prefix(s->matchedString.length());
 	    }
-	  while(scanned and not v.empty());
-	  
-	  return res;
+	  else
+	    errorEmitter("Unable to parse");
 	}
+      while(scanned and not v.empty());
+      
+      if constexpr(N==0)
+	return res;
       else
 	{
-	  std::array<RegexMatchingResult,N> res;
-	  
-	  const std::vector<RegexMatchingResult> t=_tokenize(v);
+	  /// Resulting matched regexes, in a constant-size struct
+	  std::array<RegexMatchingResult,N> resCt;
 	  
 	  for(size_t i=0;i<N and i<v.size();i++)
-	    res[i]=t[i];
+	    resCt[i]=res[i];
 	  
-	  return res;
+	  return resCt;
 	}
     }
   };
@@ -2031,8 +2030,8 @@ namespace pp::internal
   
   /// Regex matcher storing the machine in fixed size tables
   template <RegexMatcherSizes Specs>
-  struct RegexMatcherCT :
-    BaseRegexMatcher<RegexMatcherCT<Specs>>
+  struct RegexMatcherCt :
+    BaseRegexMatcher<RegexMatcherCt<Specs>>
   {
     /// States of the machine
     std::array<RegexMatcherDState,Specs.nDStates> dStates;
@@ -2044,7 +2043,7 @@ namespace pp::internal
     std::array<CtStringView,Specs.nRegexes> regexes;
     
     /// Create from dynamic-sized lexer
-    constexpr RegexMatcherCT(const RegexMatcher& oth)
+    constexpr RegexMatcherCt(const RegexMatcher& oth)
     {
       for(size_t i=0;i<Specs.nRegexes;i++)
 	regexes[i]=oth.regexes[i];
@@ -2057,7 +2056,7 @@ namespace pp::internal
     }
     
     /// Default constructor
-    constexpr RegexMatcherCT()=default;
+    constexpr RegexMatcherCt()=default;
   };
   
   /// Create regex matcher from regexes
@@ -2077,7 +2076,7 @@ namespace pp::internal
     if constexpr(RMS.isNull())
       return regexMatcher;
     else
-      return RegexMatcherCT<RMS>(regexMatcher);
+      return RegexMatcherCt<RMS>(regexMatcher);
   }
   
   /// Create regex matcher from string
