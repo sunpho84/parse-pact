@@ -2116,7 +2116,15 @@ namespace pp::internal
     constexpr RegexMatcherSizes RMS=
       estimateRegexMatcherSize(str.str...);
     
-    return createRegexMatcher<RMS>(str.str...);
+    /// Needs to replace the matched regexes, which are cast to
+    /// std::string_view and then to CtString and lose their
+    /// consteprensess (seems to happen only on gcc)
+    /// \todo verify
+    auto res=createRegexMatcher<RMS>(str.str...);
+    
+    res.regexes=std::array<CtStringView,sizeof...(str)>{(CtStringView)str...};
+    
+    return res;
   }
   
   /////////////////////////////////////////////////////////////////
