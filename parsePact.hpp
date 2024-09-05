@@ -111,6 +111,13 @@ namespace pp::internal
     {
     }
     
+    /// Construct from a CtString
+    template <size_t N>
+    constexpr CtStringView(const CtString<N>& s) :
+      begin(&s.str[0]),end(&s.str[N])
+    {
+    }
+    
     /// Assigns from a std::string_view
     constexpr CtStringView& operator=(const std::string_view& s)
     {
