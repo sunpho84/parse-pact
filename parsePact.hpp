@@ -73,11 +73,51 @@ namespace pp::internal
     /// Stored string
     char str[N];
     
+    /// Full length including possibly terminator
+    static constexpr size_t size()
+    {
+      return N;
+    }
+    
     /// Creates the CtSring copying the passed string
     inline constexpr CtString(char const(&arr)[N])
     {
       for(size_t i=0;i<N;i++)
 	this->str[i]=arr[i];
+    }
+  };
+  
+  /// A minimal struct version of the std::string_view, which can be passed as template argument
+  struct CtStringView
+  {
+    /// Begin of the string
+    const char* begin{};
+    
+    /// End of the string, past the last character
+    const char* end{};
+    
+    /// Cast to std::string_view
+    constexpr operator std::string_view() const
+    {
+      return {begin,end};
+    }
+    
+    /// Default constructor
+    constexpr CtStringView()=default;
+    
+    /// Construct from a std::string_view
+    constexpr CtStringView(const std::string_view& s) :
+      begin(s.begin()),end(s.end())
+    {
+    }
+    
+    /// Assigns from a std::string_view
+    constexpr CtStringView& operator=(const std::string_view& s)
+    {
+      begin=s.begin();
+      end=s.end();
+      
+      return *this;
     }
   };
   
