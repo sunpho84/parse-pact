@@ -1724,8 +1724,8 @@ namespace pp::internal
     size_t iToken;
   };
   
-  /// Sizes of the machine defining the refex matcher
-  struct RegexMatcherMachineSpecs
+  /// Sizes defining the regex matcher
+  struct RegexMatcherSizes
   {
     /// Number of DStates
     const size_t nDStates;
@@ -1733,10 +1733,13 @@ namespace pp::internal
     /// Number of transitions
     const size_t nTransitions;
     
+    /// Number of recognized regexes
+    const size_t nRegexes;
+    
     /// Detects if the machine is empty
     constexpr bool isNull() const
     {
-      return nDStates==0 and nTransitions==0;
+      return nDStates==0 and nTransitions==0 and nRegexes==0;
     }
   };
   
@@ -1857,13 +1860,18 @@ namespace pp::internal
     /// Transitions among the states of the DFA
     std::vector<RegexMatcherDStateTransition> transitions;
     
+    /// Recognized regexes
+    std::vector<std::string_view> regexes;
+    
     /// Default constructor
     constexpr RegexMatcher()
     {
     }
     
-    /// Construct from parse tree
-    constexpr RegexMatcher(RegexParseTreeNode& parseTree)
+    /// Construct from parse tree and regexes
+    constexpr RegexMatcher(const std::vector<std::string_view> regexes,
+			   RegexParseTreeNode& parseTree) :
+      regexes(regexes)
     {
       createFromParseTree(parseTree);
     }
@@ -2015,14 +2023,14 @@ namespace pp::internal
     }
     
     /// Gets the parameters needed to build the constexpr lexer
-    constexpr RegexMatcherMachineSpecs getSizes() const
+    constexpr RegexMatcherSizes getSizes() const
     {
-      return {.nDStates=dStates.size(),.nTransitions=transitions.size()};
+      return {.nDStates=dStates.size(),.nTransitions=transitions.size(),.nRegexes=regexes.size()};
     }
   };
   
   /// Regex matcher storing the machine in fixed size tables
-  template <RegexMatcherMachineSpecs Specs>
+  template <RegexMatcherSizes Specs>
   struct RegexMatcherCT :
     BaseRegexMatcher<RegexMatcherCT<Specs>>
   {
@@ -2032,14 +2040,20 @@ namespace pp::internal
     /// Transitions among states
     std::array<RegexMatcherDStateTransition,Specs.nTransitions> transitions;
     
+    /// Recognized regexes
+    std::array<CtStringView,Specs.nRegexes> regexes;
+    
     /// Create from dynamic-sized lexer
     constexpr RegexMatcherCT(const RegexMatcher& oth)
     {
+      for(size_t i=0;i<Specs.nRegexes;i++)
+	regexes[i]=oth.regexes[i];
+      
       for(size_t i=0;i<Specs.nDStates;i++)
-	this->dStates[i]=oth.dStates[i];
+	dStates[i]=oth.dStates[i];
       
       for(size_t i=0;i<Specs.nTransitions;i++)
-	this->transitions[i]=oth.transitions[i];
+	transitions[i]=oth.transitions[i];
     }
     
     /// Default constructor
@@ -2047,7 +2061,7 @@ namespace pp::internal
   };
   
   /// Create regex matcher from regexes
-  template <RegexMatcherMachineSpecs RMMS=RegexMatcherMachineSpecs{}>
+  template <RegexMatcherSizes RMS=RegexMatcherSizes{}>
   constexpr auto createRegexMatcher(const std::vector<std::string_view>& regexes)
   {
     /// Creates the parse tree
@@ -2057,23 +2071,26 @@ namespace pp::internal
     if(not parseTree)
       errorEmitter("Unable to parse the regex");
     
-    if constexpr(RMMS.isNull())
-      return RegexMatcher(*parseTree);
+    /// Dynamic temporary matcher
+    const RegexMatcher regexMatcher(regexes,*parseTree);
+    
+    if constexpr(RMS.isNull())
+      return regexMatcher;
     else
-      return RegexMatcherCT<RMMS>(*parseTree);
+      return RegexMatcherCT<RMS>(regexMatcher);
   }
   
   /// Create regex matcher from string
-  template <RegexMatcherMachineSpecs RMMS=RegexMatcherMachineSpecs{},
+  template <RegexMatcherSizes RMS=RegexMatcherSizes{},
     typename...T>
     requires(std::is_same_v<char,T> and ...)
     constexpr auto createRegexMatcher(const T*...str)
   {
-    return createRegexMatcher<RMMS>(std::vector<std::string_view>{str...});
+    return createRegexMatcher<RMS>(std::vector<std::string_view>{str...});
   }
   
   /// Estimates the compile time regex matcher size for a set of regex
-  constexpr RegexMatcherMachineSpecs estimateRegexMatcherSize(const std::vector<std::string_view>& regexes)
+  constexpr RegexMatcherSizes estimateRegexMatcherSize(const std::vector<std::string_view>& regexes)
   {
     return createRegexMatcher(regexes).getSizes();
   }
@@ -2081,7 +2098,7 @@ namespace pp::internal
   /// Estimates the compile time regex matcher size for a list of regexes
   template <typename...T>
   requires(std::is_same_v<char,T> and ...)
-  constexpr RegexMatcherMachineSpecs estimateRegexMatcherSize(const T*...str)
+  constexpr RegexMatcherSizes estimateRegexMatcherSize(const T*...str)
   {
     return estimateRegexMatcherSize(std::vector<std::string_view>{str...});
   }
@@ -2090,10 +2107,10 @@ namespace pp::internal
   template <CtString...str>
     constexpr auto createRegexMatcher()
   {
-    constexpr RegexMatcherMachineSpecs RMMS=
+    constexpr RegexMatcherSizes RMS=
       estimateRegexMatcherSize(str.str...);
     
-    return createRegexMatcher<RMMS>(str.str...);
+    return createRegexMatcher<RMS>(str.str...);
   }
   
   /////////////////////////////////////////////////////////////////
@@ -2487,7 +2504,7 @@ namespace pp::internal
     
     const Stack2DVectorPars stateTransitionsPars;
     
-    const RegexMatcherMachineSpecs regexMachinePars;
+    const RegexMatcherSizes regexMachinePars;
     
     /// Detects if the grammar is empty
     constexpr bool isNull() const
