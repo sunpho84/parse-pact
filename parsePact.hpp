@@ -3688,8 +3688,8 @@ namespace pp::internal
   
   /// Grammar in fixed size tables
   template <GrammarSpecs Specs>
-  struct ConstexprGrammar :
-    BaseGrammar<ConstexprGrammar<Specs>>
+  struct GrammarCt :
+    BaseGrammar<GrammarCt<Specs>>
   {
     /// Symbols accepted by the grammar
     std::array<BaseGrammarSymbol,Specs.nSymbols> symbols;
@@ -3722,7 +3722,7 @@ namespace pp::internal
     struct ProductionRef
     {
       /// Original grammar
-      const ConstexprGrammar* g;
+      const GrammarCt* g;
       
       /// Index of the production
       const size_t iProduction;
@@ -3767,7 +3767,7 @@ namespace pp::internal
     struct ItemRef
     {
       /// Underlying grammar
-      const ConstexprGrammar* g;
+      const GrammarCt* g;
       
       /// Index of the item
       const size_t iItem;
@@ -3810,7 +3810,7 @@ namespace pp::internal
     struct StateRef
     {
       /// Underlying grammar
-      const ConstexprGrammar* g;
+      const GrammarCt* g;
       
       /// Index of the state
       const size_t iState;
@@ -3878,7 +3878,7 @@ namespace pp::internal
     }
     
     /// Create from dynamic-sized grammar
-    constexpr ConstexprGrammar(const Grammar& oth)
+    constexpr GrammarCt(const Grammar& oth)
     {
       for(size_t iSymbol=0;iSymbol<Specs.nSymbols;iSymbol++)
 	this->symbols[iSymbol]=(const BaseGrammarSymbol&)oth.symbols[iSymbol];
@@ -3916,7 +3916,7 @@ namespace pp::internal
     if constexpr(GS.isNull())
       return grammar;
     else
-      return ConstexprGrammar<GS>(grammar);
+      return GrammarCt<GS>(grammar);
   }
   
   /// Estimates the grammar size
