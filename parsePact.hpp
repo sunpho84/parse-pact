@@ -1740,13 +1740,10 @@ namespace pp::internal
     /// Number of transitions
     const size_t nTransitions;
     
-    /// Number of recognized regexes
-    const size_t nRegexes;
-    
     /// Detects if the machine is empty
     constexpr bool isNull() const
     {
-      return nDStates==0 and nTransitions==0 and nRegexes==0;
+      return nDStates==0 and nTransitions==0;
     }
   };
   
@@ -1866,18 +1863,13 @@ namespace pp::internal
     /// Transitions among the states of the DFA
     std::vector<RegexMatcherDStateTransition> transitions;
     
-    /// Recognized regexes
-    std::vector<std::string_view> regexes;
-    
     /// Default constructor
     constexpr RegexMatcher()
     {
     }
     
     /// Construct from parse tree and regexes
-    constexpr RegexMatcher(const std::vector<std::string_view> regexes,
-			   RegexParseTreeNode& parseTree) :
-      regexes(regexes)
+    constexpr RegexMatcher(RegexParseTreeNode& parseTree)
     {
       createFromParseTree(parseTree);
     }
@@ -2031,7 +2023,7 @@ namespace pp::internal
     /// Gets the parameters needed to build the constexpr lexer
     constexpr RegexMatcherSizes getSizes() const
     {
-      return {.nDStates=dStates.size(),.nTransitions=transitions.size(),.nRegexes=regexes.size()};
+      return {.nDStates=dStates.size(),.nTransitions=transitions.size()};
     }
   };
   
@@ -2046,15 +2038,9 @@ namespace pp::internal
     /// Transitions among states
     std::array<RegexMatcherDStateTransition,Specs.nTransitions> transitions;
     
-    /// Recognized regexes
-    std::array<CtStringView,Specs.nRegexes> regexes;
-    
     /// Create from dynamic-sized lexer
     constexpr RegexMatcherCt(const RegexMatcher& oth)
     {
-      for(size_t i=0;i<Specs.nRegexes;i++)
-	regexes[i]=oth.regexes[i];
-      
       for(size_t i=0;i<Specs.nDStates;i++)
 	dStates[i]=oth.dStates[i];
       
@@ -2078,7 +2064,7 @@ namespace pp::internal
       errorEmitter("Unable to parse the regex");
     
     /// Dynamic temporary matcher
-    const RegexMatcher regexMatcher(regexes,*parseTree);
+    const RegexMatcher regexMatcher(*parseTree);
     
     if constexpr(RMS.isNull())
       return regexMatcher;
@@ -2116,15 +2102,7 @@ namespace pp::internal
     constexpr RegexMatcherSizes RMS=
       estimateRegexMatcherSize(str.str...);
     
-    /// Needs to replace the matched regexes, which are cast to
-    /// std::string_view and then to CtString and lose their
-    /// consteprensess (seems to happen only on gcc)
-    /// \todo verify
-    auto res=createRegexMatcher<RMS>(str.str...);
-    
-    res.regexes=std::array<CtStringView,sizeof...(str)>{(CtStringView)str...};
-    
-    return res;
+    return createRegexMatcher<RMS>(str.str...);
   }
   
   /////////////////////////////////////////////////////////////////
@@ -2196,7 +2174,7 @@ namespace pp::internal
   template <typename...T>
   constexpr Tokenizer createTokenizer(T&&...t)
   {
-    return {createRegexMatcher(std::forward<T>(t)...)};
+    return {.regexMatcher=createRegexMatcher(std::forward<T>(t)...)};
   }
   
   /////////////////////////////////////////////////////////////////
