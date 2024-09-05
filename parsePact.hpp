@@ -3872,11 +3872,6 @@ namespace pp::internal
       regexParser=oth.regexMatcher;
     }
   };
-}
-
-namespace pp
-{
-  using namespace internal;
   
   /// Create grammar from string
   template <GrammarSpecs GS=GrammarSpecs{}>
@@ -3906,6 +3901,18 @@ namespace pp
     
     return createGrammar<GS>(str.str);
   }
+}
+
+namespace pp
+{
+  using pp::internal::createRegexMatcher;
+  
+  using pp::internal::Tokenizer;
+  using pp::internal::TokenizerCt;
+  
+  using pp::internal::Grammar;
+  //using pp::internal::GrammarCt;
+  using pp::internal::createGrammar;
 }
 
 #endif
