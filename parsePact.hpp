@@ -2124,8 +2124,8 @@ namespace pp::internal
     }
   };
 
-  template <RegexMatcherCT RegexMatcher>
-  struct TokenizerCT
+  template <RegexMatcherCt RegexMatcher>
+  struct TokenizerCt
   {
     /// Estimates the compile-time number of tokens
     template <CtString str>
@@ -3675,7 +3675,7 @@ namespace pp::internal
     /// applied (if reduce)
     Stack2DVector<GrammarTransition,Specs.stateTransitionsPars> stateTransitionsData;
     
-    RegexMatcherCT<Specs.regexMachinePars> regexParser;
+    RegexMatcherCt<Specs.regexMachinePars> regexParser;
     
     static_assert(Specs.stateTransitionsPars.nRows==Specs.stateItemsPars.nRows,"number of rows for stateTransitions and stateItems do not match");
     
