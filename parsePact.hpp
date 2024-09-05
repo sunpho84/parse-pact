@@ -2187,9 +2187,16 @@ namespace pp::internal
   
   /// Create tokenizer, at constant time
   template <CtString...str>
-  constexpr TokenizerCt<createRegexMatcher<str...>> createRegexMatcher()
+  constexpr TokenizerCt<createRegexMatcher<str...>()> createTokenizer()
   {
     return {};
+  }
+  
+  /// Create tokenizer
+  template <typename...T>
+  constexpr Tokenizer createTokenizer(T&&...t)
+  {
+    return {createRegexMatcher(std::forward<T>(t)...)};
   }
   
   /////////////////////////////////////////////////////////////////
@@ -3953,10 +3960,13 @@ namespace pp::internal
 
 namespace pp
 {
+  using pp::internal::RegexMatcher;
+  using pp::internal::RegexMatcherCt;
   using pp::internal::createRegexMatcher;
   
   using pp::internal::Tokenizer;
   using pp::internal::TokenizerCt;
+  using pp::internal::createTokenizer;
   
   using pp::internal::Grammar;
   //using pp::internal::GrammarCt;
