@@ -1848,7 +1848,7 @@ namespace pp::internal
 	  /// Resulting matched regexes, in a constant-size struct
 	  std::array<RegexMatchingResult,N> resCt;
 	  
-	  for(size_t i=0;i<N and i<v.size();i++)
+	  for(size_t i=0;i<N and i<res.size();i++)
 	    resCt[i]=res[i];
 	  
 	  return resCt;
