@@ -2128,36 +2128,69 @@ namespace pp::internal
   }
   
   /////////////////////////////////////////////////////////////////
+  ////////////////////////// Tokenizer ////////////////////////////
+  /////////////////////////////////////////////////////////////////
   
-  struct Tokenizer
+  /// Tokenizer, wrapping the regex matcher
+  template <typename T>
+  struct BaseTokenizer :
+    StaticPolymorphic<T>
   {
-    RegexMatcher regexMatcher;
+    /// Import the static polymorphism cast
+    using StaticPolymorphic<T>::self;
     
+    /// Calls the regex matcher internal tokenizer
     constexpr auto tokenize(const std::string_view& v) const
     {
-      return regexMatcher._tokenize(v);
+      return self().regexMatcher._tokenize(v);
     }
   };
-
-  template <RegexMatcherCt RegexMatcher>
-  struct TokenizerCt
+  
+  /// Tokenizer, wrapping the regex matcher
+  struct Tokenizer :
+    BaseTokenizer<Tokenizer>
   {
+    /// Regex matcher to be used
+    RegexMatcher regexMatcher;
+  };
+  
+  /// Tokenizer at compile time, wrapping the regex matcher
+  ///
+  /// Wrapping the RegexMatcher in the template parameter allows to
+  /// estimate the number of tokens and return them directly
+  template <RegexMatcherCt _regexMatcher>
+  struct TokenizerCt :
+    BaseTokenizer<TokenizerCt<_regexMatcher>>
+  {
+    ///Regex matcher
+    static constexpr RegexMatcherCt regexMatcher=_regexMatcher;
+    
     /// Estimates the compile-time number of tokens
     template <CtString str>
     static constexpr size_t estimateNTokens()
     {
-      return RegexMatcher._tokenize(str.str).size();
+      return regexMatcher._tokenize(str.str).size();
     }
     
-    /// Break a string into tokens
+    /// Gives visibility to base tokenize
+    using BaseTokenizer<TokenizerCt<_regexMatcher>>::tokenize;
+    
+    /// Break a constant time string into tokens
     template <CtString str>
     constexpr auto tokenize()
     {
       constexpr size_t N=estimateNTokens<str>();
       
-      return RegexMatcher.template _tokenize<N>(str.str);
+      return regexMatcher.template _tokenize<N>(str.str);
     }
   };
+  
+  /// Create tokenizer, at constant time
+  template <CtString...str>
+  constexpr TokenizerCt<createRegexMatcher<str...>> createRegexMatcher()
+  {
+    return {};
+  }
   
   /////////////////////////////////////////////////////////////////
   
