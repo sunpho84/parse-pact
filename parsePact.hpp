@@ -2899,7 +2899,7 @@ namespace pp::internal
       // Check that all symbols are referenced at least once and defined
       for(const GrammarSymbol& s : symbols)
 	if(s.type==GrammarSymbol::Type::NON_TERMINAL_SYMBOL and s.iProductions.empty() and not s.referredAsPrecedenceSymbol)
-	  errorEmitter("Undefined symbol");
+	  errorEmitter("Undefined symbol: \"",s.name,"\"");
       
       /// Count of symbols usage as rhs or precedence
       std::vector<size_t> symbolsCount(symbols.size(),0);
@@ -2917,10 +2917,7 @@ namespace pp::internal
 	if(const std::array<size_t,4> filt{iStartSymbol,iEndSymbol,iErrorSymbol,iWhitespaceSymbol};
 	   std::find(filt.begin(),filt.end(),iSymbol)==filt.end())
 	  if(symbolsCount[iSymbol]==0)
-	    {
-	      diagnostic("Symbol ",symbols[iSymbol].name," ",iSymbol," ",iStartSymbol,"\n");
-	      errorEmitter("Unreferenced symbol");
-	    }
+	    errorEmitter("Unreferenced symbol: \"",symbols[iSymbol].name,"\"\n");
     }
     
     /// Remove the references to a symbol
