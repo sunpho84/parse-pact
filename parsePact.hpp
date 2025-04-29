@@ -3021,7 +3021,7 @@ namespace pp::internal
       size_t iSymbol=0;
       while(iSymbol<symbols.size() and not removed)
 	{
-	  if(iSymbol!=iErrorSymbol)
+	  if(iSymbol!=iErrorSymbol and iSymbol!=iStartSymbol) //\todo Start must be left, maybe can be optimized somehow
 	    if(GrammarSymbol& symbol=symbols[iSymbol];symbol.iProductions.size()==1)
 	      {
 		const size_t /* don't take by reference! */iProduction=symbol.iProductions.front();
