@@ -2177,7 +2177,7 @@ namespace pp::internal
     
     /// Break a constant time string into tokens
     template <CtString str>
-    constexpr auto tokenize()
+    constexpr auto tokenize() const
     {
       constexpr size_t N=estimateNTokens<str>();
       
