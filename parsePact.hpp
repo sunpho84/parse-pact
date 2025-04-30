@@ -3413,14 +3413,19 @@ namespace pp::internal
     /// Generate goto items
     constexpr void generateGotoItems()
     {
-      diagnostic("-----------------------------------\n");
+      diagnostic("--------------- Generating goto items --------------------\n");
       
       for(size_t iState=0;iState<stateItems.size();iState++)
 	{
+	  diagnostic("State ",iState,"\n");
+	  diagnostic(stateItems[iState].describe(items,productions,symbols),"\n");
+	  
 	  for(const GrammarTransition& transition : stateTransitions[iState])
 	    for(const size_t& iItem : stateItems[iState].iItems)
 	      {
+		diagnostic("Transition: ",transition.describe(items,productions,symbols,stateItems));
 		const GrammarItem& item=items[iItem];
+		diagnostic("Item: ",item.describe(productions,symbols),"\n\n");
 		// const GrammarSymbol& symbol=symbols[transition.iSymbol];
 		const GrammarProduction& production=productions[item.iProduction];
 		if(production.iRhsList.size() and production.iRhsList[item.position]==transition.iSymbol)
@@ -3740,6 +3745,12 @@ namespace pp::internal
       return Specs.stateTransitionsPars.nRows;
     }
     
+    /// Returns the number of productions
+    static constexpr size_t nProductions()
+    {
+      return Specs.productionPars.nRows;
+    }
+    
     /// Accessor to a production
     struct ProductionRef
     {
@@ -3881,7 +3892,7 @@ namespace pp::internal
 	for(size_t iTransition=0;iTransition<nTransitions();iTransition++)
 	  {
 	    const GrammarTransition& t=transition(iTransition);
-	    out+=pref+"   symbol \""+(std::string)g->symbols[t.iSymbol].name+" ";
+	    out+=pref+"   symbol \""+(std::string)g->symbols[t.iSymbol].name+"\" ";
 	    if(t.type==GrammarTransition::Type::SHIFT)
 	      out+=" SHIFTING to state #";
 	    else
