@@ -353,9 +353,12 @@ namespace pp::internal
   
   /// Emit the error. Can be run only at compile time, so the error will
   /// be prompted at compile time if invoked in a constexpr
-  inline void errorEmitter(const char* str)
+  template <typename...Args>
+  inline void errorEmitter(Args&&...args)
   {
-    fprintf(stderr,"Error: %s\n",str);
+    std::cerr<<"Error: ";
+    ((std::cerr<<args),...);
+    std::cerr<<"\n";
     exit(1);
   }
   
