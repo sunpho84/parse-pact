@@ -3428,7 +3428,8 @@ namespace pp::internal
 		diagnostic("Item: ",item.describe(productions,symbols),"\n\n");
 		// const GrammarSymbol& symbol=symbols[transition.iSymbol];
 		const GrammarProduction& production=productions[item.iProduction];
-		if(production.iRhsList.size() and production.iRhsList[item.position]==transition.iSymbol)
+		
+		if(item.position<production.iRhsList.size() and production.iRhsList[item.position]==transition.iSymbol)
 		  maybeAddToUniqueVector(lookaheads[iItem].iPropagateToItems,*stateItems[transition.iStateOrProduction].findItem(items,{item.iProduction,item.position+1}));
 	      }
 	  
