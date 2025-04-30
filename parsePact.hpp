@@ -3417,16 +3417,16 @@ namespace pp::internal
       
       for(size_t iState=0;iState<stateItems.size();iState++)
 	{
-	  diagnostic("State ",iState,"\n");
+	  // diagnostic("State ",iState,"\n");
 	  diagnostic(stateItems[iState].describe(items,productions,symbols),"\n");
 	  
 	  for(const GrammarTransition& transition : stateTransitions[iState])
 	    for(const size_t& iItem : stateItems[iState].iItems)
 	      {
-		diagnostic("Transition: ",transition.describe(items,productions,symbols,stateItems));
+		// diagnostic("Transition: ",transition.describe(items,productions,symbols,stateItems));
 		const GrammarItem& item=items[iItem];
-		diagnostic("Item: ",item.describe(productions,symbols),"\n\n");
-		// const GrammarSymbol& symbol=symbols[transition.iSymbol];
+		// diagnostic("Item: ",item.describe(productions,symbols),"\n\n");
+		/// const GrammarSymbol& symbol=symbols[transition.iSymbol];
 		const GrammarProduction& production=productions[item.iProduction];
 		
 		if(item.position<production.iRhsList.size() and production.iRhsList[item.position]==transition.iSymbol)
