@@ -2201,7 +2201,7 @@ namespace pp::internal
   template <typename...T>
   constexpr Tokenizer createTokenizer(T&&...t)
   {
-    return {createRegexMatcher(std::forward<T>(t)...)};
+    return {.regexMatcher=createRegexMatcher(std::forward<T>(t)...)};
   }
   
   /////////////////////////////////////////////////////////////////
