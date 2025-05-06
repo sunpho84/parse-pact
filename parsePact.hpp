@@ -1666,6 +1666,8 @@ namespace pp::internal
     /// Gets the parse tree from a list of regex
     static constexpr std::optional<RegexParseTreeNode> parseRegexes(const std::vector<std::string_view>& regexes)
     {
+      diagnostic("Creating the parse tree of all regexes\n");
+      
       using enum RegexParseTreeNode::Type;
       
       std::optional<RegexParseTreeNode> res;
@@ -2513,7 +2515,7 @@ namespace pp::internal
       out+=symbols[iSymbol].name;
       out+="\" ";
       if(type==SHIFT)
-	out+="transits to state: \n"+states[iStateOrProduction].describe(items,productions,symbols,"       ");
+	out+="transits to state "+std::to_string(iStateOrProduction)+":\n"+states[iStateOrProduction].describe(items,productions,symbols,"       ");
       else
 	out+="induces a reduce transition using production: "+productions[iStateOrProduction].describe(symbols)+"\n";
       
@@ -2899,6 +2901,11 @@ namespace pp::internal
     /// Performs some test of the grammar
     constexpr void checkTheGrammar()
     {
+      diagnostic("List of detected symbols:\n");
+      for(const GrammarSymbol& s : symbols)
+	diagnostic(s.name,"\n");
+      diagnostic("\n");
+      
       // Check that all symbols are referenced at least once and defined
       for(const GrammarSymbol& s : symbols)
 	if(s.type==GrammarSymbol::Type::NON_TERMINAL_SYMBOL and s.iProductions.empty() and not s.referredAsPrecedenceSymbol)
