@@ -4,10 +4,13 @@ using namespace pp;
 
 using namespace std;
 
+using namespace pp::internal;
+
 int main()
 {
   constexpr const char nissaGrammar[]=
     "nissa {"
+    "%whitespace \" *\";"
     "document: document assignment"
     "        | assignment [assegna];"
     "assignment: var \"=\" int;"
@@ -15,35 +18,63 @@ int main()
     "int: \"[0-9]+\" ;"
     "}";
   
-   const auto nissa=createGrammar(nissaGrammar);
+  constexpr const char calcGrammar[]=
+	      "nissa {"
+	      "%left \"\\+\";"
+	      "%left \"\\*\";"
+	      "%left \"\\^\";"
+	      "%whitespace \" *\";"
+	      "document: document expression"
+	      "        | expression;"
+	      "expression: expression \"\\*\" expression [mul]"
+	      "          | expression \"\\+\" expression [sum]"
+	      "          | expression \"\\^\" expression [pow]"
+	      "          | '\\(' expression '\\)' [bracket]"
+	      "          | \"[0-9]+\" [int] ;"
+	      "}";
+  
+   const auto nissa=createGrammar(calcGrammar);
    //constexpr auto nissa=createGrammar<nissaGrammar>();
   
-  // for(int iProduction=0;iProduction<nissa.nProductions();iProduction++)
-  //   {
-  //     cout<<"Production "<<iProduction<<endl;
-  //     cout<<"---------------------"<<endl;
-  //     cout<<nissa.production(iProduction).describe()<<endl;
-  //     cout<<endl;
-  //   }
+  for(int iProduction=0;iProduction<nissa.productions.size();iProduction++)
+    {
+      cout<<"Production "<<iProduction<<endl;
+      cout<<"---------------------"<<endl;
+      cout<<nissa.productions[iProduction].describe(nissa.symbols)<<endl;
+      cout<<endl;
+    }
   
-  // for(int iState=0;iState<nissa.nStates();iState++)
-  //   {
-  //     cout<<"State "<<iState<<endl;
-  //     cout<<"---------------------"<<endl;
-  //     cout<<nissa.state(iState).describe()<<endl;
-  //     cout<<endl;
-  //   }
-
-using namespace pp::internal;
-
-  constexpr char nissaExample[]="ALA=8";
+  for(int iState=0;iState<nissa.stateItems.size();iState++)
+    {
+      cout<<"State "<<iState<<endl;
+      cout<<"---------------------"<<endl;
+      cout<<nissa.stateItems[iState].describe(nissa.items,nissa.productions,nissa.symbols)<<endl;
+      cout<<endl;
+      
+      for(const GrammarTransition& t : nissa.stateTransitions[iState])
+	diagnostic(nissa.describe(t));
+      cout<<endl;
+    }
   
-  string_view x=nissaExample;
+  //constexpr char nissaExample[]="ALAZ=9 BAMBO=1";
+  constexpr char calcExample[]="9+3^2*(4+5)";
+  
+  string_view x=calcExample;
+  bool endReached=false;
   bool m;
   size_t i=0;
   vector<size_t> states{0};
-  vector<size_t> symbols{0};
-  size_t cursor=1;
+  vector<size_t> symbols{};
+  size_t cursor=0;
+
+  struct ParseTreeNode
+  {
+    std::string_view txt;
+    
+    std::vector<ParseTreeNode> subNodes;
+  };
+  
+  std::vector<ParseTreeNode> parsedSymbols;
   
   diagnostic("nStates: ",states.size(),"\n");
   auto& c=nissa;
@@ -63,27 +94,46 @@ using namespace pp::internal;
       if(cursor<symbols.size())
 	{
 	  iNextSymbol=symbols[cursor];
-	  diagnostic("No need to parse, nextToken from cursor: ",iNextSymbol,"\n");
+	  diagnostic("No need to parse, nextToken from cursor: ",iNextSymbol,"=\"",nissa.symbols[iNextSymbol].name,"\"\n");
 	}
       else
 	{
-	  diagnostic("Parsed ",i," tokens, going to parse: ",x,"\n");
+	  diagnostic("Parsed ",i," tokens, going to parse: \"",x,"\"\n");
 	  
-	  auto r=c.regexMatcher.match(x);
-	  m=r.has_value();
-	  
-	  if(r)
+	  if(x.empty())
 	    {
-	      x={x.begin()+r->matchedString.length(),x.end()};
-	      iNextSymbol=c.iSymbolOfRegex[r->iToken];
-	      if(iNextSymbol!=c.iWhitespaceSymbol)
-		symbols.emplace(symbols.begin()+cursor,iNextSymbol);
-	      
-	      diagnostic("matched string: \"",r->matchedString,"\" corresponding to symbol ",iNextSymbol," \"",c.symbols[iNextSymbol].name,"\"\n");
-	      i++;
+	      if(not endReached)
+		{
+		  diagnostic("Reached the end of the string\n");
+		  endReached=true;
+		  iNextSymbol=nissa.iEndSymbol;
+		  symbols.emplace(symbols.begin()+cursor,iNextSymbol);
+		  m=true;
+		}
+	      else
+		diagnostic("End of the string already reached\n");
 	    }
 	  else
-	    diagnostic("unable to parse \"",x,"\"\n");
+	    {
+	      auto r=c.regexMatcher.match(x);
+	      m=r.has_value();
+	      
+	      if(r)
+		{
+		  x={x.begin()+r->matchedString.length(),x.end()};
+		  iNextSymbol=c.iSymbolOfRegex[r->iToken];
+		  if(iNextSymbol!=c.iWhitespaceSymbol)
+		    {
+		      symbols.emplace(symbols.begin()+cursor,iNextSymbol);
+		      parsedSymbols.push_back({r->matchedString});
+		    }
+		  
+		  diagnostic("matched string: \"",r->matchedString,"\" corresponding to symbol ",iNextSymbol," \"",c.symbols[iNextSymbol].name,"\"\n");
+		  i++;
+		}
+	      else
+		diagnostic("unable to parse \"",x,"\"\n");
+	    }
 	}
       
       diagnostic("mmmm: ",m,"\n");
@@ -101,14 +151,25 @@ using namespace pp::internal;
 	  if(iTransition<transitions.size())
 	    {
 	      const GrammarTransition& t=transitions[iTransition];
+	      const bool isReduce=t.type==GrammarTransition::Type::REDUCE;
 	      
-	      diagnostic("Going to use transition: ",c.describe(t),"\n");
-	      if(t.type==GrammarTransition::Type::REDUCE)
+	      diagnostic("Going to use ",isReduce?"reduce ":"","transition: ",c.describe(t),"\n");
+	      if(isReduce)
 		{
 		  const GrammarProduction& production=c.productions[t.iStateOrProduction];
 		  //states.pop_back();
-		  symbols.erase(symbols.begin()+cursor-production.iRhsList.size(),symbols.begin()+cursor);
+		  const size_t beg=cursor-production.iRhsList.size();
+		  const size_t end=cursor;
+		  symbols.erase(symbols.begin()+beg,symbols.begin()+end);
+		  
+		  ParseTreeNode res{production.action,{std::make_move_iterator(parsedSymbols.begin()+beg),std::make_move_iterator(parsedSymbols.begin()+end)}};
+		  parsedSymbols.erase(parsedSymbols.begin()+beg,parsedSymbols.begin()+end);
+		  parsedSymbols.insert(parsedSymbols.begin()+beg,res);
+		  
+		  states.erase(states.end()-production.iRhsList.size(),states.end());
+		  
 		  cursor-=production.iRhsList.size();
+		  diagnostic("reduction ",production.action,"\n");
 		  symbols.emplace(symbols.begin()+cursor,production.iLhs);
 		}
 	      else
@@ -135,9 +196,31 @@ using namespace pp::internal;
 	    errorEmitter("Unable to find grammar transition");
 	}
     }
-  while(m and x.length());
- bug: 9 non è riconosciuto
-    bug:.end non è riconosciuto
+  while(m and not(states.size()==1 and states[0]==0 and symbols.size()==2 and symbols[0]==nissa.iStartSymbol and symbols[1]==nissa.iEndSymbol and x.length()==0));
+
+  auto it=[](const auto& self,
+	     ParseTreeNode& p) ->void
+  {
+    diagnostic(p.txt);
+    
+    if(p.subNodes.size())
+      {
+	diagnostic("(");
+	self(self,p.subNodes.front());
+	for(size_t i=1;i<p.subNodes.size();i++)
+	  {
+	    diagnostic(",");
+	    self(self,p.subNodes[i]);
+	  }
+	diagnostic(")");
+      }
+  };
+  
+  it(it,parsedSymbols.front());
+  diagnostic("\n");
+  diagnostic(calcExample,"\n");
+
+ bug: lexer is not reporting error
   
   return 0;
 }
