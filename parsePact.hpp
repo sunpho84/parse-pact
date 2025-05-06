@@ -445,8 +445,8 @@ namespace pp::internal
 	res="[";
 	printChar(b);
 	res+=";";
-	printChar(e);
-	res+=")";
+	printChar(e-1);
+	res+="]";
       }
     
     return res;
@@ -1541,7 +1541,7 @@ namespace pp::internal
 	      {
 		/// First create a detached node
 		auto tmp=
-		  RegexParseTreeNode{RegexParseTreeNode::Type::CHAR,{},b,e};
+		  RegexParseTreeNode{RegexParseTreeNode::Type::CHAR,{},b,std::max(e,char(e+1))};
 		
 		if(res)
 		  res=RegexParseTreeNode{RegexParseTreeNode::Type::OR,{std::move(*res),std::move(tmp)}};
