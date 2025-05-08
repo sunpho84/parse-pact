@@ -2563,6 +2563,8 @@ namespace pp::internal
     
     const RegexMatcherSizes regexMachinePars;
     
+    const size_t nRegexes;
+    
     /// Detects if the grammar is empty
     constexpr bool isNull() const
     {
@@ -3747,7 +3749,8 @@ namespace pp::internal
 	   .nRows=states.size()},
 	 .transitionsOfStatesPars{.nEntries=vectorOfVectorsTotalEntries(transitionsOfStates),
 				  .nRows=transitionsOfStates.size()},
-	 .regexMachinePars=regexMatcher.getSizes()};
+	 .regexMachinePars=regexMatcher.getSizes(),
+	.nRegexes=iSymbolOfRegex.size()};
     }
   };
   
@@ -3777,6 +3780,8 @@ namespace pp::internal
     Stack2DVector<GrammarTransition,Specs.transitionsOfStatesPars> transitionsOfStatesData;
     
     RegexMatcherCt<Specs.regexMachinePars> regexMatcher;
+    
+    std::array<size_t,Specs.nRegexes> iSymbolOfRegex;
     
     static_assert(Specs.transitionsOfStatesPars.nRows==Specs.stateItemsPars.nRows,"number of rows for transitionsOfStates and stateItems do not match");
     
@@ -4029,6 +4034,8 @@ namespace pp::internal
       stateIItemsData.fillWith([&oth](const size_t& iState)->const std::vector<size_t>&{return oth.states[iState].iItems;});
       
       transitionsOfStatesData.fillWith([&oth](const size_t& iState)->const std::vector<GrammarTransition>&{return oth.transitionsOfStates[iState];});
+      
+      std::copy(oth.iSymbolOfRegex.begin(),oth.iSymbolOfRegex.end(),iSymbolOfRegex.begin());
       
       regexMatcher=oth.regexMatcher;
     }
