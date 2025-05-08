@@ -239,7 +239,7 @@ namespace pp::internal
 	    Stack2DVectorPars Pars>
   struct Stack2DVector
   {
-    /// Parameters to specify a row into the table
+    /// Parameters to specify a row of the table
     struct RowPars
     {
       /// Begin of the row
@@ -2058,7 +2058,8 @@ namespace pp::internal
     constexpr RegexMatcherCt(const RegexMatcher& oth)
     {
       for(size_t i=0;i<Specs.nRegexes;i++)
-	regexes[i]=oth.regexes[i];
+	regexes[i]=*(std::launder
+		     (&oth.regexes[i]));
       
       for(size_t i=0;i<Specs.nDStates;i++)
 	dStates[i]=oth.dStates[i];
@@ -2127,7 +2128,7 @@ namespace pp::internal
     /// \todo verify
     auto res=createRegexMatcher<RMS>(str.str...);
     
-    res.regexes=std::array<CtStringView,sizeof...(str)>{(CtStringView)str...};
+    // res.regexes=std::array<CtStringView,sizeof...(str)>{(CtStringView)str...};
     
     return res;
   }
@@ -2506,18 +2507,25 @@ namespace pp::internal
     constexpr inline std::string describe(const std::vector<GrammarItem>& items,
 					  const std::vector<GrammarProduction>& productions,
 					  const std::vector<GrammarSymbol>& symbols,
-					  const std::vector<GrammarState>& states) const
+					  const std::vector<GrammarState>& states,
+					  const std::string& pref="") const
     {
       /// Returned string
       std::string out;
       
-      out+="   \"";
-      out+=symbols[iSymbol].name;
-      out+="\" ";
-      if(type==SHIFT)
-	out+="transits to state "+std::to_string(iStateOrProduction)+":\n"+states[iStateOrProduction].describe(items,productions,symbols,"       ");
-      else
-	out+="induces a reduce transition using production: "+productions[iStateOrProduction].describe(symbols)+"\n";
+      if(not std::is_constant_evaluated())
+	{
+	  out+=pref+"\"";
+	  out+=symbols[iSymbol].name;
+	  out+="\" ";
+	  if(type==SHIFT)
+	    {
+	      out+="transits to state "+std::to_string(iStateOrProduction)+":\n";
+	      out+=states[iStateOrProduction].describe(items,productions,symbols,pref+"       ");
+	    }
+	  else
+	    out+=pref+"induces a reduce transition using production: "+productions[iStateOrProduction].describe(symbols)+"\n";
+	}
       
       return out;
     }
@@ -2561,7 +2569,7 @@ namespace pp::internal
     
     const Stack2DVectorPars stateItemsPars;
     
-    const Stack2DVectorPars stateTransitionsPars;
+    const Stack2DVectorPars transitionsOfStatesPars;
     
     const RegexMatcherSizes regexMachinePars;
     
@@ -2573,7 +2581,7 @@ namespace pp::internal
 	productionPars.isNull() and
 	nItems==0 and
 	stateItemsPars.isNull() and
-	stateTransitionsPars.isNull() and
+	transitionsOfStatesPars.isNull() and
 	regexMachinePars.isNull();
     }
   };
@@ -2585,14 +2593,6 @@ namespace pp::internal
   {
     /// Import the static polymorphism cast
     using StaticPolymorphic<T>::self;
-  };
-  
-  /// Grammar with all the functions to create it
-  struct Grammar
-  {
-    std::string_view name;
-    
-    std::vector<GrammarSymbol> symbols;
     
     size_t iStartSymbol{};
     
@@ -2601,6 +2601,15 @@ namespace pp::internal
     size_t iErrorSymbol{};
     
     size_t iWhitespaceSymbol{};
+  };
+  
+  /// Grammar with all the functions to create it
+  struct Grammar :
+    BaseGrammar<Grammar>
+  {
+    std::string_view name;
+    
+    std::vector<GrammarSymbol> symbols;
     
     size_t currentPrecedence{};
     
@@ -2610,9 +2619,9 @@ namespace pp::internal
     
     std::vector<GrammarItem> items;
     
-    std::vector<GrammarState> stateItems;
+    std::vector<GrammarState> states;
     
-    std::vector<std::vector<GrammarTransition>> stateTransitions;
+    std::vector<std::vector<GrammarTransition>> transitionsOfStates;
     
     std::vector<Lookahead> lookaheads;
     
@@ -2639,10 +2648,36 @@ namespace pp::internal
       return state.describe(items,productions,symbols,pref);
     }
     
-    /// Describes a transition
-    constexpr inline std::string describe(const GrammarTransition& transition) const
+    constexpr inline std::string describeState(const size_t& iState,
+					       const std::string& pref="") const
     {
-      return transition.describe(items,productions,symbols,stateItems);
+      return describe(states[iState],pref);
+    }
+    
+    /// Describes the transition
+    constexpr inline std::string describe(const GrammarTransition& transition,
+					  const std::string& pref="") const
+    {
+      return transition.describe(items,productions,symbols,states,pref);
+    }
+    
+    constexpr inline std::string describeStateTransition(const size_t& iState,
+							 const size_t& iTransition,
+							 const std::string& pref="") const
+    {
+      return describe(transitionsOfStates[iState][iTransition],pref);
+    }
+    
+    /// Returns a reference to a production
+    constexpr inline const GrammarProduction& production(const size_t& iProduction) const
+    {
+      return productions[iProduction];
+    }
+    
+    /// Returns the action corresponding to a given production
+    constexpr inline const std::string_view& action(const size_t& iProduction) const
+    {
+      return production(iProduction).action;
     }
     
     /// Finds or insert a symbol
@@ -3034,11 +3069,12 @@ namespace pp::internal
 		const size_t /* don't take by reference! */iProduction=symbol.iProductions.front();
 		
 		if(const GrammarProduction& production=productions[iProduction];production.iRhsList.size()==1 and production.action.empty())
-		  if(const size_t /* don't take by reference! */ iActualSymbol=production.iRhsList.front();symbols[iActualSymbol].type==GrammarSymbol::Type::TERMINAL_SYMBOL)
+		  if(const size_t /* don't take by reference! */ iActualSymbol=production.iRhsList.front();1)//symbols[iActualSymbol].type==GrammarSymbol::Type::TERMINAL_SYMBOL)
 		    {
 		      removed=true;
 		      diagnostic("Symbol \"",symbol.name,"\" with precedence ",symbol.precedence,
-				 " is an alias for the terminal: \"",symbols[iActualSymbol].name,"\" with precedence ",symbols[iActualSymbol].precedence,"\n");
+				 " is an alias for"// the terminal
+				 ": \"",symbols[iActualSymbol].name,"\" with precedence ",symbols[iActualSymbol].precedence,"\n");
 		      
 		      removeProduction(iProduction);
 		      replaceAndRemoveSymbol(iSymbol,iActualSymbol);
@@ -3298,13 +3334,13 @@ namespace pp::internal
     {
       diagnostic("-----------------------------------\n");
       
-      stateItems.emplace_back(std::vector<size_t>{0});
-      stateTransitions.resize(1);
+      transitionsOfStates.resize(1);
+      states.emplace_back(std::vector<size_t>{0});
       
       items.emplace_back(symbols[iStartSymbol].iProductions.front(),0);
       
       const size_t iStartState=0;
-      stateItems[iStartState].addClosure(items,productions,symbols);
+      states[iStartState].addClosure(items,productions,symbols);
       
       diagnostic("Start state first production: ",describe(productions[symbols[iStartSymbol].iProductions.front()]),"\n");
       
@@ -3315,37 +3351,38 @@ namespace pp::internal
 	  for(const size_t& iState : iStates)
 	    for(size_t iSymbol=0;iSymbol<symbols.size();iSymbol++)
 	      if(iSymbol!=iEndSymbol)
-		if(const GrammarState gotoState=stateItems[iState].createGotoState(iSymbol,items,productions,symbols);gotoState.iItems.size())
+		if(const GrammarState gotoState=states[iState].createGotoState(iSymbol,items,productions,symbols);gotoState.iItems.size())
 		  {
 		    /// Search the goto state in the list of states
-		    const auto [inserted,iGotoState]=maybeAddToUniqueVector(stateItems,gotoState);
+		    const auto [inserted,iGotoState]=maybeAddToUniqueVector(states,gotoState);
 		    
 		    if(inserted)
 		      {
 			iNextStates.push_back(iGotoState);
-			stateTransitions.emplace_back();
+			transitionsOfStates.emplace_back();
 		      }
 		    
-		    stateTransitions[iState].emplace_back(iSymbol,iGotoState);
-		    diagnostic("Emplaced in state:\n",describe(stateItems[iState]));
-		    diagnostic(" the transition mediated by symbol \"",symbols[iSymbol].name,"\" to state\n",describe(stateItems[iGotoState]),"\n");
+		    transitionsOfStates[iState].emplace_back(iSymbol,iGotoState);
+		    diagnostic("Emplaced in state:\n",describe(states[iState]));
+		    diagnostic(" the transition mediated by symbol \"",symbols[iSymbol].name,"\" to state\n",describe(states[iGotoState]),"\n");
 		    
 		  }
 	}
       
-      for(size_t iState=0;iState<stateItems.size();iState++)
+      for(size_t iState=0;iState<states.size();iState++)
 	{
+	  const GrammarState& state=states[iState];
+	  
 	  diagnostic("--\n");
 	  
-	  diagnostic("State:\n",describe(stateItems[iState]));
-	  diagnostic("has ",stateTransitions[iState].size()," transitions:\n");
+	  diagnostic("State:\n",describe(state));
+	  diagnostic("has ",transitionsOfStates[iState].size()," transitions:\n");
 	  
-	  if(stateTransitions[iState].size())
-	    for(const GrammarTransition& t : stateTransitions[iState])
-	      diagnostic(describe(t));
+	  for(const GrammarTransition& t : transitionsOfStates[iState])
+	    diagnostic(describe(t));
 	}
       
-      for(auto& s : stateItems)
+      for(auto& s : states)
 	s.addClosure(items,productions,symbols);
     }
     
@@ -3358,7 +3395,7 @@ namespace pp::internal
       diagnostic("Building the lookaheds for ",symbols.size()," symbols, read from lookaheads: ",lookaheads.front().symbolIs.n," nchars: ",lookaheads.front().symbolIs.data.size(),"\n");
       lookaheads[0].symbolIs.set(iEndSymbol);
       
-      for(const GrammarState& state : stateItems)
+      for(const GrammarState& state : states)
 	for(const size_t iItem : state.iItems)
 	  {
 	    const GrammarItem& item=items[iItem];
@@ -3422,13 +3459,15 @@ namespace pp::internal
     {
       diagnostic("--------------- Generating goto items --------------------\n");
       
-      for(size_t iState=0;iState<stateItems.size();iState++)
+      for(size_t iState=0;iState<states.size();iState++)
 	{
-	  // diagnostic("State ",iState,"\n");
-	  diagnostic(stateItems[iState].describe(items,productions,symbols),"\n");
+	  const GrammarState& state=states[iState];
 	  
-	  for(const GrammarTransition& transition : stateTransitions[iState])
-	    for(const size_t& iItem : stateItems[iState].iItems)
+	  // diagnostic("State ",iState,"\n");
+	  diagnostic(state.describe(items,productions,symbols),"\n");
+	  
+	  for(const GrammarTransition& transition : transitionsOfStates[iState])
+	    for(const size_t& iItem : state.iItems)
 	      {
 		// diagnostic("Transition: ",transition.describe(items,productions,symbols,stateItems));
 		const GrammarItem& item=items[iItem];
@@ -3437,10 +3476,10 @@ namespace pp::internal
 		const GrammarProduction& production=productions[item.iProduction];
 		
 		if(item.position<production.iRhsList.size() and production.iRhsList[item.position]==transition.iSymbol)
-		  maybeAddToUniqueVector(lookaheads[iItem].iPropagateToItems,*stateItems[transition.iStateOrProduction].findItem(items,{item.iProduction,item.position+1}));
+		  maybeAddToUniqueVector(lookaheads[iItem].iPropagateToItems,*states[transition.iStateOrProduction].findItem(items,{item.iProduction,item.position+1}));
 	      }
 	  
-	  for(const size_t& iItem : stateItems[iState].iItems)
+	  for(const size_t& iItem : state.iItems)
 	    {
 	      const GrammarItem& item=items[iItem];
 	      const GrammarProduction& production=productions[item.iProduction];
@@ -3449,7 +3488,7 @@ namespace pp::internal
 		 position<production.iRhsList.size() and production.isNullableAfter(symbols,position+1))
 		for(const size_t& iOtherProduction : symbols[production.iRhsList[position]].iProductions)
 		  {
-		    if(const std::optional<size_t> maybeIGotoItem=stateItems[iState].findItem(items,{iOtherProduction,0}))
+		    if(const std::optional<size_t> maybeIGotoItem=state.findItem(items,{iOtherProduction,0}))
 		      maybeAddToUniqueVector(lookaheads[iItem].iPropagateToItems,*maybeIGotoItem);
 		  }
 	    }
@@ -3584,15 +3623,16 @@ namespace pp::internal
     {
       diagnostic("-----------------------------------\n");
       
-      for(size_t iState=0;iState<stateItems.size();iState++)
+      for(size_t iState=0;iState<states.size();iState++)
 	{
-	  bool stateDescribed=0;
-	  GrammarState& state=stateItems[iState];
+	  const GrammarState& state=states[iState];
 	  
-	  for(size_t iIItem=0;iIItem<stateItems[iState].iItems.size();iIItem++)
+	  bool stateDescribed=0;
+	  
+	  for(size_t iIItem=0;iIItem<state.iItems.size();iIItem++)
 	    {
 	      bool itemDescribed=0;
-	      const size_t iItem=stateItems[iState].iItems[iIItem];
+	      const size_t iItem=state.iItems[iIItem];
 	      const GrammarItem& item=items[iItem];
 	      const size_t& iProduction=item.iProduction;
 	      const GrammarProduction& production=productions[iProduction];
@@ -3620,7 +3660,7 @@ namespace pp::internal
 			
 			/// Position of the transition in the state
 			size_t iTransition=0;
-			std::vector<GrammarTransition>& transitions=stateTransitions[iState];
+			std::vector<GrammarTransition>& transitions=transitionsOfStates[iState];
 			while(iTransition<transitions.size() and transitions[iTransition].iSymbol!=iSymbol)
 			  iTransition++;
 			
@@ -3705,7 +3745,7 @@ namespace pp::internal
 					  }),
 	   .nRows=productions.size()},
 	 .nItems=items.size(),
-	 .stateItemsPars{.nEntries=reduce(stateItems,
+	 .stateItemsPars{.nEntries=reduce(states,
 					  [](const GrammarState& s,
 					     std::optional<size_t> x=std::nullopt)
 					  {
@@ -3714,9 +3754,9 @@ namespace pp::internal
 					    
 					    return *x+s.iItems.size();
 					  }),
-	   .nRows=stateItems.size()},
-	 .stateTransitionsPars{.nEntries=vectorOfVectorsTotalEntries(stateTransitions),
-			       .nRows=stateTransitions.size()},
+	   .nRows=states.size()},
+	 .transitionsOfStatesPars{.nEntries=vectorOfVectorsTotalEntries(transitionsOfStates),
+				  .nRows=transitionsOfStates.size()},
 	 .regexMachinePars=regexMatcher.getSizes()};
     }
   };
@@ -3732,6 +3772,9 @@ namespace pp::internal
     /// Index of the symbols representing a production, for each state
     Stack2DVector<size_t,Specs.productionPars> productionsData;
     
+    /// Action associated to each production
+    std::array<std::string_view,Specs.productionPars.nRows> actions;
+    
     /// Items representing the states, defined in term of index of production and position
     std::array<GrammarItem,Specs.nItems> items;
     
@@ -3741,20 +3784,28 @@ namespace pp::internal
     /// Transitions for each state, defined in terms of the symbol, the
     /// type (shift/reduce), and target state (if shift) or the production to be
     /// applied (if reduce)
-    Stack2DVector<GrammarTransition,Specs.stateTransitionsPars> stateTransitionsData;
+    Stack2DVector<GrammarTransition,Specs.transitionsOfStatesPars> transitionsOfStatesData;
     
-    RegexMatcherCt<Specs.regexMachinePars> regexParser;
+    RegexMatcherCt<Specs.regexMachinePars> regexMatcher;
     
-    static_assert(Specs.stateTransitionsPars.nRows==Specs.stateItemsPars.nRows,"number of rows for stateTransitions and stateItems do not match");
+    std::array<size_t,Specs.regexMachinePars.nRegexes> iSymbolOfRegex;
+    
+    static_assert(Specs.transitionsOfStatesPars.nRows==Specs.stateItemsPars.nRows,"number of rows for transitionsOfStates and stateItems do not match");
     
     /// Returns the number of states
     static constexpr size_t nStates()
     {
-      return Specs.stateTransitionsPars.nRows;
+      return Specs.transitionsOfStatesPars.nRows;
     }
     
     /// Returns the number of productions
     static constexpr size_t nProductions()
+    {
+      return Specs.productionPars.nRows;
+    }
+    
+    /// Returns the number of productions
+    static constexpr size_t nTransitions()
     {
       return Specs.productionPars.nRows;
     }
@@ -3787,7 +3838,7 @@ namespace pp::internal
       }
       
       /// Describes the production
-      constexpr std::string describe() const
+      constexpr std::string describe(auto&&...) const
       {
 	std::string out=(std::string)g->symbols[iLhs()].name+": ";
 	
@@ -3799,9 +3850,15 @@ namespace pp::internal
     };
     
     /// Returns a reference to a production
-    ProductionRef production(const size_t& iProduction) const
+    constexpr inline ProductionRef production(const size_t& iProduction) const
     {
       return {this,iProduction};
+    }
+    
+    /// Returns the action corresponding to a given production
+    constexpr inline const std::string_view& action(const size_t& iProduction) const
+    {
+      return actions[iProduction];
     }
     
     /// Reference to an item
@@ -3814,7 +3871,7 @@ namespace pp::internal
       const size_t iItem;
       
       /// Describes the item
-      constexpr std::string describe()
+      constexpr std::string describe(auto&&...)
       {
 	/// Item referred
 	const auto& item=g->items[iItem];
@@ -3877,13 +3934,13 @@ namespace pp::internal
       /// Gets the number of item
       constexpr const size_t nTransitions() const
       {
-	return g->stateTransitionsData.rowSize(iState);
+	return g->transitionsOfStatesData.rowSize(iState);
       }
       
       /// Returns a reference to the iTransition-th transition
       constexpr const GrammarTransition& transition(const size_t& iTransition) const
       {
-	return g->stateTransitionsData(iState,iTransition);
+	return g->transitionsOfStatesData(iState,iTransition);
       }
       
       /// Describes the state
@@ -3905,7 +3962,7 @@ namespace pp::internal
 	      out+=" SHIFTING to state #";
 	    else
 	      out+=" REDUCING with production #";
-	    out+=std::to_string(t.iStateOrProduction)+"\n";
+	    #warning out+=std::to_string(t.iStateOrProduction)+"\n";
 	  }
 	
 	return out;
@@ -3918,9 +3975,51 @@ namespace pp::internal
       return {this,iState};
     }
     
+    /// Describes a state
+    constexpr inline std::string describeState(const size_t& iState,
+					       const std::string& pref="") const
+    {
+      return state(iState).describe(pref);
+    }
+    
+    constexpr inline std::string describeStateTransition(const size_t& iState,
+							 const size_t& iTransition,
+							 const std::string& pref="") const
+    {
+      const GrammarTransition& transition=
+	transitionsOfStatesData(iState,iTransition);
+      
+      /// Returned string
+      std::string out;
+      
+      if(not std::is_constant_evaluated())
+	{
+	  out+=pref+"\"";
+	  out+=symbols[transition.iSymbol].name;
+	  out+="\" ";
+	  if(const size_t& i=transition.iStateOrProduction;transition.type==GrammarTransition::SHIFT)
+	    {
+	      out+="transits to state "+std::to_string(i)+":\n";
+	      out+=state(i).describe(pref+"       ");
+	    }
+	  else
+	    out+=pref+"induces a reduce transition using production: "+production(i).describe(symbols)+"\n";
+	}
+      
+      return out;
+    }
+    
     /// Create from dynamic-sized grammar
     constexpr ConstexprGrammar(const Grammar& oth)
     {
+      this->iStartSymbol=oth.iStartSymbol;
+      
+      this->iEndSymbol=oth.iEndSymbol;
+      
+      this->iErrorSymbol=oth.iErrorSymbol;
+      
+      this->iWhitespaceSymbol=oth.iWhitespaceSymbol;
+      
       for(size_t iSymbol=0;iSymbol<Specs.nSymbols;iSymbol++)
 	this->symbols[iSymbol]=(const BaseGrammarSymbol&)oth.symbols[iSymbol];
       
@@ -3939,11 +4038,13 @@ namespace pp::internal
       for(size_t iItem=0;iItem<Specs.nItems;iItem++)
 	this->items[iItem]=oth.items[iItem];
       
-      stateIItemsData.fillWith([&oth](const size_t& iState)->const std::vector<size_t>&{return oth.stateItems[iState].iItems;});
+      stateIItemsData.fillWith([&oth](const size_t& iState)->const std::vector<size_t>&{return oth.states[iState].iItems;});
       
-      stateTransitionsData.fillWith([&oth](const size_t& iState)->const std::vector<GrammarTransition>&{return oth.stateTransitions[iState];});
+      transitionsOfStatesData.fillWith([&oth](const size_t& iState)->const std::vector<GrammarTransition>&{return oth.transitionsOfStates[iState];});
       
-      regexParser=oth.regexMatcher;
+      std::copy(oth.iSymbolOfRegex.begin(),oth.iSymbolOfRegex.end(),iSymbolOfRegex.begin());
+      
+      regexMatcher=oth.regexMatcher;
     }
   };
   
