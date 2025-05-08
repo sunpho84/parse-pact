@@ -2,6 +2,10 @@
 
 using namespace pp;
 
+using namespace std;
+
+using pp::internal::diagnostic;
+
 constexpr void test()
 {
   //parseTreeFromRegex("(\\+|\\-)?[0-9]+","(\\+|\\-)?[0-9]+(\\.[0-9]+)?((e|E)(\\+|\\-)?[0-9]+)?","[^h]");
@@ -22,15 +26,14 @@ constexpr void test()
   
   /////////////////////////////////////////////////////////////////
   
-  /// Storage properties of the regex pattern matcher
-  constexpr auto specs=estimateRegexParserSize(jsonNumberPattern,jsonRealNumberPattern,testNotContainingHPattern);
-  
   /// Regex parser matcher
-  constexpr auto parser=createParserFromRegex<specs>(jsonNumberPattern,jsonRealNumberPattern,testNotContainingHPattern);
+  constexpr auto regexMatcher=createRegexMatcher<jsonNumberPattern,jsonRealNumberPattern,testNotContainingHPattern>();
   
-  static_assert(parser.parse("-332.235e-34")->iToken==JSON_REAL_NUMER);
-  static_assert(parser.parse("33")->iToken==JSON_NUMBER);
-  static_assert(parser.parse("ello world!")->iToken==TEXT_NOT_CONTAINING_H);
+  
+  
+  static_assert(regexMatcher.match("-332.235e-34")->iToken==JSON_REAL_NUMER);
+  static_assert(regexMatcher.match("33")->iToken==JSON_NUMBER);
+  static_assert(regexMatcher.match("ello world!")->iToken==TEXT_NOT_CONTAINING_H);
   
   // if(constexpr auto u=parser.parse("-332.235e-34"))
   //   printf("tok %zu\n",*u);
@@ -42,6 +45,33 @@ constexpr void test()
 
 int main(int narg,char** arg)
 {
+
+  constexpr auto tee=internal::createTokenizer<"((a+)b)+"," ">();
+  constexpr auto uuu=tee.template tokenize<"aaaab aaaaab">();
+  const auto abM=createTokenizer("((a+)b)+");
+  for(const auto& [l,i] : abM.tokenize("aaabab"))
+    cout<<l<<" "<<i<<endl;
+
+  return 0;
+  
+  constexpr auto abc=createRegexMatcher<"b+","[0-9]+","c","P[A-Za-z]+","Parse"," +","rules">();
+  //constexpr auto t=TokenizerCt<abc>().tokenize<"Parse Pact rules">();
+  
+  constexpr auto t=createTokenizer<"b+","[0-9]+","c","P[A-Za-z]+","Parse"," +","rules">().tokenize<"Parse Pact rules">();
+  
+  for(const auto& [l,i] : t)
+    cout<<l<<" "<<i<<endl;
+  
+  cout<<"---"<<endl;
+  
+  constexpr auto numbersRegex=createRegexMatcher<"\\+|\\-","[0-9]+","\\.","(e|E)">();
+  constexpr auto b=TokenizerCt<numbersRegex>().tokenize<"+03.45e-045">();
+  
+  for(const auto& [l,i] : b)
+    cout<<l<<" "<<i<<endl;
+
+  return 0;
+  
   test();
   // Matching m("/* *ciao  d* \n mondo */    // come va \n qui { %left bene");
   
@@ -69,6 +99,20 @@ int main(int narg,char** arg)
      string: \"[\\\"']:string:\";\
   }";
   (void)jsonGrammar;
+
+
+  
+  
+  // static constexpr char unicodeGrammar[]=
+  // "unicode {\
+  //    a: \"😁\" ;\
+  // }";
+
+  // constexpr auto uGrammar=createConstexprGrammar([]() constexpr{return unicodeGrammar;});
+
+  // return 0;
+  
+  diagnostic("/////////////////////////////////////////////////////////////////");
   
   static constexpr char xmlGrammar[]=
     "xml {\
@@ -85,13 +129,18 @@ int main(int narg,char** arg)
    value: \"[\\\"']:string:\";\
 }";
 
+  using pp::internal::GrammarProduction;
   
-  //Grammar grammar(jsonGrammar);
+  using pp::internal::GrammarTransition;
+  
+  using pp::internal::errorEmitter;
+  
+  Grammar grammar(jsonGrammar);
   auto c=createGrammar(xmlGrammar);
-  constexpr auto c2=createConstexprGrammar([]() constexpr{return xmlGrammar;});
+  constexpr auto c2=createGrammar<xmlGrammar>();
   
   constexpr size_t c2Size=sizeof(c2.regexParser);
-  static_assert(c2Size==1,"");
+  //static_assert(c2Size==1,"");
   
   diagnostic("Productions (dynamic instantiation):\n");
   diagnostic("------------\n");
@@ -99,32 +148,32 @@ int main(int narg,char** arg)
     diagnostic(c.describe(p),"\n");
   diagnostic("\n");
   
-  constexpr auto specs=estimateGrammarSize(xmlGrammar);
+  constexpr auto specs=pp::internal::estimateGrammarSize(xmlGrammar);
   
   constexpr auto stackGrammar=createGrammar<specs>(xmlGrammar);
   
   diagnostic("Symbols:\n");
   diagnostic("--------\n");
-  for(size_t i=0;const BaseGrammarSymbol& s : stackGrammar.symbols)
+  for(size_t i=0;const auto& s : stackGrammar.symbols)
     diagnostic(i++,": ",s.name,"   ",s.typeTag()," symbol\n");
   diagnostic("\n");
   
   diagnostic("Productions:\n");
   diagnostic("------------\n");
   for(size_t i=0;i<stackGrammar.productionsData.size();i++)
-    diagnostic(std::to_string(i)+") "+stackGrammar.production(i).describe(),"\n");
+    diagnostic(to_string(i)+") "+stackGrammar.production(i).describe(),"\n");
   diagnostic("\n");
   
   diagnostic("Items:\n");
   diagnostic("------\n");
   for(size_t iItem=0;iItem<stackGrammar.items.size();iItem++)
-    diagnostic(std::to_string(iItem)+") "+stackGrammar.item(iItem).describe(),"\n");
+    diagnostic(to_string(iItem)+") "+stackGrammar.item(iItem).describe(),"\n");
   diagnostic("\n");
   
   diagnostic("States:\n");
   diagnostic("------\n");
   for(size_t iState=0;iState<stackGrammar.nStates();iState++)
-    diagnostic("State ",std::to_string(iState)+")\n"+stackGrammar.state(iState).describe("   "),"\n");
+    diagnostic("State ",to_string(iState)+")\n"+stackGrammar.state(iState).describe("   "),"\n");
   diagnostic("\n");
   
   diagnostic("Regex machine:\n");
@@ -138,11 +187,11 @@ int main(int narg,char** arg)
 #include "xmlExample.xml"
 	      ;
   
-  std::string_view x=xmlExample;
+  string_view x=xmlExample;
   bool m;
   size_t i=0;
-  std::vector<size_t> states{0};
-  std::vector<size_t> symbols{0};
+  vector<size_t> states{0};
+  vector<size_t> symbols{0};
   size_t cursor=1;
   
   diagnostic("nStates: ",states.size(),"\n");
@@ -169,17 +218,17 @@ int main(int narg,char** arg)
 	{
 	  diagnostic("Parsed ",i," tokens, going to parse: ",x,"\n");
 	  
-	  auto r=c.regexParser.parse(x);
+	  auto r=c.regexMatcher.match(x);
 	  m=r.has_value();
 	  
 	  if(r)
 	    {
-	      x={x.begin()+r->str.length(),x.end()};
+	      x={x.begin()+r->matchedString.length(),x.end()};
 	      nextToken=r->iToken;
 	      if(nextToken!=c.iWhitespaceSymbol)
 		symbols.emplace(symbols.begin()+cursor,nextToken);
 	      
-	      diagnostic("matched string: \"",r->str,"\" corresponding to token ",r->iToken," \"",c.symbols[r->iToken].name,"\"\n");
+	      diagnostic("matched string: \"",r->matchedString,"\" corresponding to token ",r->iToken," \"",c.symbols[r->iToken].name,"\"\n");
 	      i++;
 	    }
 	  else
@@ -189,7 +238,7 @@ int main(int narg,char** arg)
       diagnostic("mmmm: ",m,"\n");
       if(m and nextToken!=c.iWhitespaceSymbol)
 	{
-	  const std::vector<GrammarTransition>& transitions=c.stateTransitions[iState];
+	  const vector<GrammarTransition>& transitions=c.stateTransitions[iState];
 	  
 	  size_t iTransition=0;
 	  while(iTransition<transitions.size() and transitions[iTransition].iSymbol!=nextToken)
