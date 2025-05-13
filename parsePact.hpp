@@ -4037,6 +4037,9 @@ namespace pp::internal
       
       std::copy(oth.iSymbolOfRegex.begin(),oth.iSymbolOfRegex.end(),iSymbolOfRegex.begin());
       
+      for(size_t iProduction=0;iProduction<nProductions();iProduction++)
+	actions[iProduction]=oth.productions[iProduction].action;
+      
       regexMatcher=oth.regexMatcher;
     }
   };
