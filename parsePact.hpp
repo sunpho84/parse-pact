@@ -432,36 +432,28 @@ namespace pp::internal
 				      const char e)
   {
     std::string res;
-    auto printChar=
-      [&res](const char c)
-      {
-	if(c>=32 and c<127)
-	  res+=c;
-	else
-	  {
-	    res+="\\";
+    
+    auto printAsNumb=
+      [&res](const char& c)
+      	  {
 	    for(char t=c,m=100;m;m/=10)
 	      {
-		res+=(char)((t/m)+48);
+		res+=(char)((t/m)+'0');
 		t%=m;
 	      }
-	  }
-      };
+	  };
     
-    if(e==b+1)
-      {
-	res="'";
-	printChar(b);
-	res+="'";
-      }
-    else
-      {
-	res="[";
-	printChar(b);
-	res+=";";
-	printChar(e-1);
-	res+="]";
-      }
+    res="[";
+    printAsNumb(b);
+    res+=" - ";
+    printAsNumb(e);
+    res+=") = {";
+    for(char i=b;i<e;i++)
+      if(i>=32 and i<127)
+	res+=i;
+      else
+	res+=' ';
+    res+='}';
     
     return res;
   }
@@ -1731,7 +1723,7 @@ namespace pp::internal
       if(end==beg+1)
 	::printf("%c",beg);
       else
-	::printf("[%c-%c)",beg,end);
+	::printf("%s",rangeDescribe(beg,end).c_str());
       
       ::printf(", dState: %zu\n",nextDState);
     }
@@ -1812,7 +1804,7 @@ namespace pp::internal
 	  if(trans!=self().transitions.end() and trans->iDStateFrom==dState)
 	    {
 	      dState=trans->nextDState;
-	      diagnostic("matched ",c," with trans ",trans->iDStateFrom," ",rangeDescribe(trans->beg,trans->end),", going to dState ",dState,"\n");
+	      diagnostic("matched '",c,"' with trans ",trans->iDStateFrom," ",rangeDescribe(trans->beg,trans->end),", going to dState ",dState,"\n");
 	      str.remove_prefix(1);
 	    }
 	  else
@@ -2035,7 +2027,7 @@ namespace pp::internal
 	      transitions[iTransition].printf();
 	    
 	    if(dStates[iDState].accepting)
-	      printf(" accepting token %zu\n",dStates[iDState].iToken);
+	      printf("  and accepting token %zu\n",dStates[iDState].iToken);
 	  }
     }
     
@@ -2836,7 +2828,7 @@ namespace pp::internal
 		  symbols[iLhs].iProductions.push_back(productions.size());
 		  productions.emplace_back(iLhs,iRhss,iPrecedenceSymbol,action);
 		  
-		  diagnostic("ADDED production ",describe(productions.back()),"\n");
+		  diagnostic("ADDED production: \"",describe(productions.back()),"\"\n");
 		}
 	      while(matchin.matchChar('|'));
 	      
@@ -3969,7 +3961,7 @@ namespace pp::internal
 	      out+=" SHIFTING to state #";
 	    else
 	      out+=" REDUCING with production #";
-	    #warning out+=std::to_string(t.iStateOrProduction)+"\n";
+	    out+=toString(t.iStateOrProduction)+"\n";
 	  }
 	
 	return out;
