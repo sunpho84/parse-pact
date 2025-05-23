@@ -2940,7 +2940,7 @@ namespace pp::internal
 	      
 	      match.matchWhiteSpaceOrComments();
 	      if(not match.matchChar('}'))
-		diagnostic("Unfinished grammar, reference is: \"",match.ref,"\"\n");
+		errorEmitter("Unfinished grammar, reference is: \"",match.ref,"\"\n");
 	      
 	      match.matchWhiteSpaceOrComments();
 	      if(not match.ref.empty())
