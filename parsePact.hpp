@@ -385,7 +385,7 @@ namespace pp::internal
     /// Insert a single char
     constexpr void set(const char& c)
     {
-      self().set(std::make_pair(c,(char)(c+1)));
+      self().set(std::make_pair(c,std::max(c,(char)(c+1))));
     }
     
     /// Insert a string
@@ -1507,7 +1507,7 @@ namespace pp::internal
 			  if(const char e=regexStr.matchPossiblyEscapedCharNotIn("^]-"))
 			    {
 			      diagnostic("  matched char range end ",e,"\n");
-			      matchableChars.set(std::make_pair(b,e));
+			      matchableChars.set(std::make_pair(b,std::max(e,(char)(e+1))));
 			      rangeMatchState.accept();
 			    }
 			}
@@ -1541,7 +1541,7 @@ namespace pp::internal
 	      {
 		/// First create a detached node
 		auto tmp=
-		  RegexParseTreeNode{RegexParseTreeNode::Type::CHAR,{},b,std::max(e,char(e+1))};
+		  RegexParseTreeNode{RegexParseTreeNode::Type::CHAR,{},b,e};
 		
 		if(res)
 		  res=RegexParseTreeNode{RegexParseTreeNode::Type::OR,{std::move(*res),std::move(tmp)}};
