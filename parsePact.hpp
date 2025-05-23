@@ -128,6 +128,20 @@ namespace pp::internal
     }
   };
   
+  /// Converts to a string
+  constexpr inline std::string toString(size_t i)
+  {
+    std::string out;
+    
+    while(i)
+      {
+	out.insert(0,1,(i%10)+'0');
+	i/=10;
+      }
+    
+    return out;
+  }
+  
   /// Custom bitset
   struct BitSet
   {
