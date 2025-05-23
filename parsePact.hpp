@@ -85,7 +85,31 @@ namespace pp::internal
       for(size_t i=0;i<N;i++)
 	this->str[i]=arr[i];
     }
+    
+    /// Creates empty CtSring
+    inline constexpr CtString()
+    {
+      for(size_t i=0;i<N;i++)
+	this->str[i]='\0';
+    }
   };
+  
+  /// Creates the CtSring copying filling from a const char, not necessarily null terminated
+  template <const std::pair<const char*,const char*> S>
+  inline constexpr auto getCtString()
+    {
+      constexpr size_t N=
+	S.second-S.first+1;
+      
+      CtString<N> res{};
+      
+      for(size_t i=0;i<N-1;i++)
+	res.str[i]=S.first[i];
+      
+      res.str[N-1]='\0';
+      
+      return res;
+    }
   
   /// A minimal struct version of the std::string_view, which can be passed as template argument
   struct CtStringView
