@@ -1,6 +1,10 @@
+#include <cmath>
 #include <parsePact.hpp>
 
+#include <functional>
 #include <set>
+#include <map>
+#include <variant>
 
 using namespace pp;
 
@@ -8,192 +12,190 @@ using namespace std;
 
 using namespace pp::internal;
 
-/// Specifications of the grammar
-struct ParseTreeSpecs
+
+template <CtString>
+struct Action;
+
+template <>
+struct Action<"int">
 {
-  // /// Number of symbols
-  // const size_t nSymbols;
-  
-  // const Stack2DVectorPars productionPars;
-  
-  // const size_t nItems;
-  
-  // const Stack2DVectorPars stateItemsPars;
-  
-  // const Stack2DVectorPars stateTransitionsPars;
-  
-  // const RegexMatcherSizes regexMachinePars;
-  
-  /// Detects if the grammar is empty
-  constexpr bool isNull() const
+  static constexpr int eval(const std::string_view& in)
   {
-    return true;
-      // nSymbols==0 and
-      // productionPars.isNull() and
-      // 	nItems==0 and
-      // stateItemsPars.isNull() and
-      // stateTransitionsPars.isNull() and
-      // regexMachinePars.isNull();
+    int res=0;
+    
+    for(const char& c : in)
+      {
+	// if(c<'0' or c<'9')
+	//   errorEmitter(c," not in the range [0-9]");
+	res=res*10+c-'0';
+      }
+    
+    return res;
   }
 };
 
-template <typename G,
-  ParseTreeSpecs Specs=ParseTreeSpecs{}>
-  constexpr auto getParseTree(const G& grammar,
-			      std::string_view input)
+template <>
+struct Action<"mul">
 {
-  bool endReached=false;
-  bool m;
-  size_t i=0;
-  vector<size_t> states{0};
-  vector<size_t> symbols{};
-  size_t cursor=0;
-  
-  /// Holds a node in the parse tree of the expression
-  struct ParseTreeNode
+  static constexpr auto eval(const int& a,
+			     const std::string_view& in,
+			     const int& b)
   {
-    std::string_view txt;
+    return a*b;
+  }
+};
+
+template <>
+struct Action<"sum">
+{
+  static constexpr auto eval(const int& a,
+			     const std::string_view& in,
+			     const int& b)
+  {
+    return a+b;
+  }
+};
+
+template <>
+struct Action<"pow">
+{
+  static constexpr auto eval(const int& a,
+			     const std::string_view& in,
+			     const int& b)
+  {
+    int res=1;
+    for(int i=0;i<b;i++)
+      res*=a;
     
-    std::vector<ParseTreeNode> subNodes;
-  };
-  
-  std::vector<ParseTreeNode> parsedSymbols;
-  
-  do
-    {
-      const size_t iState=states.back();
-      const auto& state=grammar.state(iState);
-      
-      diagnostic("/////////////////////////////////////////////////////////////////\n");
-      
-      diagnostic("At state: ",iState,"\n");
-      diagnostic(grammar.describeState(iState));
-      
-      for(size_t iTransition=0;iTransition<state.nTransitions();iTransition++)
-	diagnostic(grammar.describeStateTransition(iState,iTransition));
-      
-      size_t iNextSymbol=0;
-      
-      if(cursor<symbols.size())
-	{
-	  iNextSymbol=symbols[cursor];
-	  diagnostic("No need to parse, nextToken from cursor: ",iNextSymbol,"=\"",grammar.symbols[iNextSymbol].name,"\"\n");
-	}
-      else
-	{
-	  diagnostic("Parsed ",i," tokens, going to parse: \"",input,"\"\n");
-	  
-	  if(input.empty())
-	    {
-	      if(not endReached)
-		{
-		  diagnostic("Reached the end of the string\n");
-		  endReached=true;
-		  iNextSymbol=grammar.iEndSymbol;
-		  symbols.emplace(symbols.begin()+cursor,iNextSymbol);
-		  m=true;
-		}
-	      else
-		diagnostic("End of the string already reached\n");
-	    }
-	  else
-	    {
-	      auto r=grammar.regexMatcher.match(input);
-	      m=r.has_value();
-	      
-	      if(r)
-		{
-		  input={input.begin()+r->matchedString.length(),input.end()};
-		  iNextSymbol=grammar.iSymbolOfRegex[r->iToken];
-		  if(iNextSymbol!=grammar.iWhitespaceSymbol)
-		    {
-		      symbols.emplace(symbols.begin()+cursor,iNextSymbol);
-		      parsedSymbols.push_back({r->matchedString});
-		    }
-		  
-		  diagnostic("matched string: \"",r->matchedString,"\" corresponding to symbol ",iNextSymbol," \"",grammar.symbols[iNextSymbol].name,"\"\n");
-		  i++;
-		}
-	      else
-		errorEmitter("unable to match \"",input,"\"");
-	    }
-	}
-      
-      diagnostic("mmmm: ",m,"\n");
-      if(m and iNextSymbol!=grammar.iWhitespaceSymbol)
-	{
-	  size_t iTransition=0;
-	  while(iTransition<grammar.nTransitions() and state.transition(iTransition).iSymbol!=iNextSymbol)
-	    {
-	      diagnostic("skipping transition ",grammar.describeStateTransition(iState,iTransition)," as ",state.transition(iTransition).iSymbol,"!=",iNextSymbol,"\n");
-	      iTransition++;
-	    }
-	  
-	  if(iTransition<grammar.nTransitions())
-	    {
-	      const GrammarTransition& t=state.transition(iTransition);
-	      const bool isReduce=t.type==GrammarTransition::Type::REDUCE;
-	      
-	      diagnostic("Going to use ",isReduce?"reduce ":"","transition: ",grammar.describeStateTransition(iState,iTransition),"\n");
-	      if(isReduce)
-		{
-		  const auto& production=grammar.production(t.iStateOrProduction);
-		  //states.pop_back();
-		  const size_t beg=cursor-production.nRhs();
-		  const size_t end=cursor;
-		  symbols.erase(symbols.begin()+beg,symbols.begin()+end);
+    return res;
+  }
+};
 
-		  const std::string_view& action=grammar.action(t.iStateOrProduction);
-		  
-		  ParseTreeNode res{action,{std::make_move_iterator(parsedSymbols.begin()+beg),std::make_move_iterator(parsedSymbols.begin()+end)}};
-		  parsedSymbols.erase(parsedSymbols.begin()+beg,parsedSymbols.begin()+end);
-		  parsedSymbols.insert(parsedSymbols.begin()+beg,res);
-		  
-		  states.erase(states.end()-production.nRhs(),states.end());
-		  
-		  cursor-=production.nRhs();
-		  diagnostic("reduction ",action,"\n");
-		  symbols.emplace(symbols.begin()+cursor,production.iLhs());
-		}
-	      else
-		{
-		  states.push_back(t.iStateOrProduction);
-		  cursor++;
-		}
-	      
-	      diagnostic("States:\n");
-	      for(const size_t& iState : states)
-		diagnostic("   ",iState,"\n");
-	      
-	      diagnostic("Symbols:\n");
-	      for(size_t iiSymbol=0;iiSymbol<symbols.size();iiSymbol++)
-		{
-		  const size_t iSymbol=symbols[iiSymbol];
-		  
-		  diagnostic("   ",iSymbol," ",grammar.symbols[iSymbol].name,"\n");
-		  if(cursor==iiSymbol)
-		    diagnostic(".......\n");
-		}
-	    }
-	  else
-	    errorEmitter("Unable to find grammar transition");
-	}
-    }
-  while(m and not(states.size()==1 and states[0]==0 and symbols.size()==2 and symbols[0]==grammar.iStartSymbol and symbols[1]==grammar.iEndSymbol and input.length()==0));
-
-  int t=0;
-  auto count=
-    [&t](auto self,
-	 const ParseTreeNode& n)->void
+template <>
+struct Action<"bracket">
+{
+  static constexpr const int& eval(const std::string_view& a,
+			     const int& in,
+			     const std::string_view& b)
   {
-    t++;
-    for(const auto& s : n.subNodes)
-      self(self,s);
-  };
+    return in;
+  }
+};
 
-  count(count,parsedSymbols.front());
+template <>
+struct Action<"pp_maybeReturn">
+{
+  template <typename A>
+  static constexpr decltype(auto) eval(A&& a)
+  {
+    return a;
+  }
   
-  return t;
+  static constexpr void eval()
+  {
+  }
+};
+
+template <FlattenedParseTreeNode...ParseTreeNodes>
+struct Process;
+
+template <>
+struct Process<>
+{
+  static constexpr auto eval(std::nullptr_t)
+  {
+  }
+};
+
+template <FlattenedParseTreeNode Head,
+	  FlattenedParseTreeNode...Tail>
+struct Process<Head,
+	       Tail...>
+{
+  template <typename Stack,
+	    size_t...A,
+	    size_t...B>
+  static constexpr auto reduce(Stack&& stack,
+			       const std::index_sequence<A...>&,
+			       const std::index_sequence<B...>&)
+  {
+    if constexpr(not Head.txt().empty())
+      {
+	constexpr size_t txtSize=Head.txt().length()+1;
+	constexpr CtString<txtSize> act=getCtString<Head.txtData>();
+	
+	using Res=
+	  decltype(Action<act>::eval(std::get<B+sizeof...(A)>(stack)...));
+	
+	if constexpr(not std::is_same_v<Res,void>)
+	    return Process<Tail...>::eval(std::get<A>(stack)...,Action<act>::eval(std::get<B+sizeof...(A)>(stack)...));
+	else
+	  {
+	    Action<act>::eval(std::get<B+sizeof...(A)>(stack)...);
+	    
+	    return Process<Tail...>::eval(std::get<A>(stack)...,nullptr);
+	  }
+      }
+    else
+      if constexpr(sizeof...(Tail)==0)
+	return Action<"pp_maybeReturn">::eval(std::get<B+sizeof...(A)>(stack)...);
+      else
+	return Process<Tail...>::eval(std::get<A>(stack)...,nullptr);
+  }
+  
+  template <typename...Stack>
+  static constexpr auto eval(Stack&&...stack)
+  {
+    if constexpr(Head.nSubNodes==0)
+      {
+	diagnostic("Shifting symbol \"",Head.txt(),"\n");
+	
+	return Process<Tail...>::eval(std::forward<Stack>(stack)...,Head.txt());
+      }
+    else
+      return reduce(std::forward_as_tuple(std::forward<Stack>(stack)...),
+		    std::make_index_sequence<sizeof...(Stack)-Head.nSubNodes>(),
+		    std::make_index_sequence<Head.nSubNodes>());
+  }
+};
+
+template <std::array A>
+struct Processa
+{
+  static constexpr size_t N=A.size();
+  
+  template <size_t...I>
+  static constexpr auto evala(const std::index_sequence<I...>&)
+  {
+    return Process<A[I]...>::eval();
+  }
+  
+  static constexpr auto eval()
+  {
+    return evala(std::make_index_sequence<N>());
+  }
+};
+
+using Var=
+  std::variant<std::monostate,std::string,int,double>;
+
+using Sym=
+  std::variant<std::monostate,std::string,int,double>;
+
+template <typename T>
+const T& fetch(std::vector<Sym>& syms,
+	       const size_t& i)
+{
+  if(const size_t n=syms.size();n<i)
+    errorEmitter(n," symbols received, aksed symbol #",i);
+  
+  const T* s=
+    std::get_if<T>(&syms[i]);
+  
+  if(not s)
+    errorEmitter("symbol ",i," is not of the required type ",typeid(T).name());
+  
+  return *s;
 }
 
 int main()
@@ -201,86 +203,286 @@ int main()
   [[maybe_unused]]
   constexpr const char nissaGrammar[]=
     "nissa {"
-    "%whitespace \" *\";"
-    "document: document assignment"
-    "        | assignment [assegna];"
-    "assignment: var \"=\" int;"
-    "var: \"[A-Z]+\" ;"
-    "int: \"[0-9]+\" ;"
+    "   %whitespace \" *\";"
+    "   %right \"=\";"
+    "   %left \"\\+\";"
+    "   %left \"\\-\";"
+    "   %left \"\\*\";"
+    "   document: document statement \";\" "
+    "           | statement \";\" "
+    "           | \"for\" \"\\(\" statement \";\" statement \";\" statement \"\\)\" statement \";\""
+    "           ;"
+    "   statement: lhs \"=\" statement [assign] "
+    "            | lhs \"=\" expr [assign] "
+    "            ;"
+    "   lhs: id [return]"
+    "      ;"
+    "   expr: expr \"\\*\" expr [product]"
+    "       | expr \"\\+\" expr [sum]"
+    "       | expr \"\\-\" expr [sub]"
+    "       | \"\\+\" expr [uplus]"
+    "       | \"\\-\" expr [uminus]"
+    "       | \"\\(\" expr \"\\)\" [bracket]"
+    "       | id [rhsSub]"
+    "       | str [return]"
+    "       | int [return]"
+    "       ;"
+    "   id: \"[a-zA-Z_][a-zA-Z0-9_]*\" [getId]"
+    "     ;"
+    "   str: \"\\\"[^\\\"]*\\\"\" [storeString]"
+    "      ;"
+    "   int: \"[0-9]+\" [convToInt]"
+    "      ;"
     "}";
   
-  constexpr const char calcGrammar[]=
-	      "nissa {"
-	      "%left \"\\+\";"
-	      "%left \"\\*\";"
-	      "%left \"\\^\";"
-	      "%whitespace \" +\";"
-	      "document: document expression"
-	      "        | expression;"
-	      "expression: expression \"\\*\" expression [mul]"
-	      "          | expression \"\\+\" expression [sum]"
-	      "          | expression \"\\^\" expression [pow]"
-	      "          | '\\(' expression '\\)' [bracket]"
-	      "          | \"[0-9]+\" [int] ;"
-	      "}";
+  const auto g=createGrammar(nissaGrammar);
   
-  constexpr auto nissa=createGrammar<calcGrammar>();
-   //constexpr auto nissa=createGrammar<nissaGrammar>();
+  constexpr auto nissa=createGrammar<nissaGrammar>();
   
-  // for(int iProduction=0;iProduction<nissa.productions.size();iProduction++)
-  //   {
-  //     cout<<"Production "<<iProduction<<endl;
-  //     cout<<"---------------------"<<endl;
-  //     cout<<nissa.productions[iProduction].describe(nissa.symbols)<<endl;
-  //     cout<<endl;
-  //   }
+  std::map<std::string,Var> varTable;
   
-  // for(int iState=0;iState<nissa.stateItems.size();iState++)
-  //   {
-  //     cout<<"State "<<iState<<endl;
-  //     cout<<"---------------------"<<endl;
-  //     cout<<nissa.stateItems[iState].describe(nissa.items,nissa.productions,nissa.symbols)<<endl;
-  //     cout<<endl;
-      
-  //     for(const GrammarTransition& t : nissa.stateTransitions[iState])
-  // 	diagnostic(nissa.describe(t));
-  //     cout<<endl;
-  //   }
+  std::vector<Sym> stack;
   
-  // //constexpr char nissaExample[]="ALAZ=9 BAMBO=1";
-  constexpr char calcExample[]="9+3^2*(4+5)";
+  std::map<std::string,std::function<Sym(std::vector<Sym>&)>> actions;
+  actions["convToInt"]=
+    [](std::vector<Sym>& syms)->Sym
+  {
+    return atoi(fetch<std::string>(syms,0).c_str());
+  };
   
-  constexpr size_t n=getParseTree(nissa,calcExample);
-  cout<<n<<endl;
+  actions["getId"]=
+    [](std::vector<Sym>& syms)->Sym
+  {
+    return fetch<std::string>(syms,0);
+  };
   
-  // std::map<const ParseTreeNode*,std::string> ms;
-  // int iddd=0;
-  // auto getName=
-  //   [&ms,&iddd](const ParseTreeNode& p) ->std::string
-  // {
-  //   std::string& tmp=ms[&p];
-  //   if(tmp=="")
-  //     tmp=(std::string)p.txt+"_"+std::to_string(iddd++);
+  actions["storeString"]=
+    [](std::vector<Sym>& syms)->Sym
+  {
+    const std::string& tmp=
+      fetch<std::string>(syms,0);
     
-  //   return tmp;
-  // };
+    return tmp.substr(1,tmp.length()-2);
+  };
   
-  // auto it=[&](const auto& self,
-  // 	      const ParseTreeNode& p) ->void
-  // {
-  //   diagnostic("\"",getName(p),"\" [label=\"",p.txt,"\"]\n");
+  actions["bracket"]=
+    [](std::vector<Sym>& syms)->Sym
+  {
+    if(syms.size()!=3)
+      errorEmitter("expecting exactly 3 symbols");
     
-  //   for(const auto& s : p.subNodes)
-  //     {
-  // 	diagnostic("\"",getName(p),"\" -> \"",getName(s),"\"\n");
+    return syms[1];
+  };
+  
+  actions["return"]=
+    [](std::vector<Sym>& syms)->Sym
+  {
+    if(syms.size()!=1)
+      errorEmitter("expecting only 1 symbol");
+    
+    return syms[0];
+  };
+  
+  actions["uplus"]=
+    [](std::vector<Sym>& syms)->Sym
+  {
+    if(syms.size()!=2)
+      errorEmitter("expecting 2 symbols");
+    
+    return std::visit([](const auto& op) -> Sym
+    {
+      if constexpr(Uplussable<decltype(op)>)
+	return +op;
+      else
+	{
+	  errorEmitter("unplussable types");
+	  return std::monostate{};
+	}
+    },
+      syms[1]);
+    
+    return {};
+  };
+  
+  actions["uminus"]=
+    [](std::vector<Sym>& syms)->Sym
+  {
+    if(syms.size()!=2)
+      errorEmitter("expecting 2 symbols");
+    
+    return std::visit([](const auto& op) -> Sym
+    {
+      if constexpr(Uminusable<decltype(op)>)
+	return -op;
+      else
+	{
+	  errorEmitter("unplussable types");
+	  return std::monostate{};
+	}
+    },
+      syms[1]);
+    
+    return {};
+  };
+  
+  actions["assign"]=
+    [&varTable](std::vector<Sym>& syms)->Sym
+  {
+    if(syms.size()!=3)
+      errorEmitter("expecting precisely 3 symbols");
+    
+    const Sym& rhs=
+      syms[2];
+    
+    if(std::holds_alternative<std::monostate>(rhs))
+      errorEmitter("while assigning, rhs has no type");
+    
+    Sym& lhs=
+      varTable[fetch<std::string>(syms,0)];
+    
+    if(std::holds_alternative<std::monostate>(lhs) or lhs.index()==rhs.index())
+      lhs=rhs;
+    else
+      errorEmitter("while assigning, lhs has a type with index different from rhs");
+    
+    return lhs;
+  };
+  
+  actions["product"]=
+    [](std::vector<Sym>& syms)->Sym
+  {
+    if(syms.size()!=3)
+      errorEmitter("expecting precisely 3 symbols");
+    
+    return std::visit([](const auto& op1,
+			 const auto& op2) -> Sym
+    {
+      if constexpr(Producible<decltype(op1),decltype(op2)>)
+	return op1*op2;
+      else
+	{
+	  errorEmitter("unproducible types");
+	  return std::monostate{};
+	}
+    },
+		      syms[0],
+		      syms[2]);
+    
+    return {};
+  };
+  
+  actions["sum"]=
+    [](std::vector<Sym>& syms)->Sym
+    {
+    if(syms.size()!=3)
+      errorEmitter("expecting precisely 3 symbols");
+    
+    return std::visit([](const auto& op1,
+			 const auto& op2) -> Sym
+    {
+      if constexpr(Summable<decltype(op1),decltype(op2)>)
+	return op1+op2;
+      else
+	{
+	  errorEmitter("unsummable types");
+	  return std::monostate{};
+	}
+    },
+		      syms[0],
+		      syms[2]);
+    
+    return {};
+  };
+  
+  actions["sub"]=
+    [](std::vector<Sym>& syms)->Sym
+    {
+    if(syms.size()!=3)
+      errorEmitter("expecting precisely 3 symbols");
+    
+    return std::visit([](const auto& op1,
+			 const auto& op2) -> Sym
+    {
+      if constexpr(Diffable<decltype(op1),decltype(op2)>)
+	return op1-op2;
+      else
+	{
+	  errorEmitter("unsubtractable types");
+	  return std::monostate{};
+	}
+    },
+		      syms[0],
+		      syms[2]);
+    
+    return {};
+  };
+  
+  actions["rhsSub"]=
+    [&varTable](std::vector<Sym>& syms)->Sym
+  {
+    const std::string& name=
+      fetch<std::string>(syms,0);
+    
+    const auto& v=
+      varTable.find(name);
+    
+    if(v==varTable.end())
+      errorEmitter("using uninitialized variable ",name);
+    
+    return v->second;
+  };
+  
+  const auto pt=
+    createParseTree(nissa,
+		    "A=-1*+3; B=-5*(2-A); C=B*A; "
+		    "D=\"ciao\"; E=F=D+\"dai\";");
+  
+  diagnostic("====================================\n");
+  
+  for(const auto& [txt,n] : pt)
+    if(const std::string_view tmp{txt.first,txt.second};n==0)
+      {
+	diagnostic("Push string: ",tmp,"\n");
+	stack.push_back((std::string)tmp);
+      }
+    else
+      {
+	diagnostic("Reducing ",n," symbols from stack of size ",stack.size(),"\n");
 	
-  // 	self(self,s);
-  //     }
-  // };
+	if(tmp=="")
+	  {
+	    diagnostic(" (no action)\n");
+	    stack.erase(stack.end()-n,stack.end());
+	    stack.push_back(std::monostate{});
+	  }
+	else
+	  {
+	    diagnostic(" with action: \"",tmp,"\"\n");
+	    
+	    if(const auto af=
+	       actions.find((std::string)tmp);
+	       af==actions.end())
+	      errorEmitter("action \"",tmp,"\" not registered");
+	    else
+	      {
+		std::vector<Sym> syms{std::make_move_iterator(stack.end()-n),std::make_move_iterator(stack.end())};
+		stack.erase(stack.end()-n,stack.end());
+		diagnostic(" pushing returned symbol to stack\n");
+		stack.push_back(af->second(syms));
+	      }
+	  }
+	
+	diagnostic(" new stack size: ",stack.size(),"\n");
+      }
   
-  // it(it,parsedSymbols.front());
-  // diagnostic("\n");
-  // diagnostic(calcExample,"\n");
+  for(const auto& [name,v] : varTable)
+    std::visit([&name](const auto& v)
+    {
+      if constexpr(Streamable<decltype(v)>)
+	diagnostic(name,"=",v,"\n");
+      else
+	errorEmitter("Unprintable type ",typeid(decltype(v)).name());
+    },v);
   
   return 0;
 }

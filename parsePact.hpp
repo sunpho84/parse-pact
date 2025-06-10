@@ -166,6 +166,49 @@ namespace pp::internal
     return out;
   }
   
+  /// Structural array
+  template <typename T,
+	      size_t N>
+  struct Array
+  {
+    T data[N];
+    
+    constexpr const T& operator[](const size_t& i) const
+    {
+      return data[i];
+    }
+    
+    constexpr T& operator[](const size_t& i)
+    {
+      return data[i];
+    }
+    
+    constexpr const T* begin() const
+    {
+      return data;
+    }
+    
+    constexpr T* begin()
+    {
+      return data;
+    }
+    
+    constexpr const T* end() const
+    {
+      return data+N;
+    }
+    
+    constexpr T* end()
+    {
+      return data+N;
+    }
+    
+    constexpr const size_t size() const
+    {
+      return N;
+    }
+  };
+  
   /// Custom bitset
   struct BitSet
   {
@@ -288,10 +331,10 @@ namespace pp::internal
     };
     
     /// Holds the data
-    std::array<T,Pars.nEntries> data;
+    Array<T,Pars.nEntries> data;
     
     /// Holds the parameters defining the rows positions
-    std::array<RowPars,Pars.nRows> rowPars;
+    Array<RowPars,Pars.nRows> rowPars;
     
     /// Access element (row, col)
     constexpr const T& operator()(const size_t& row,
@@ -2069,10 +2112,10 @@ namespace pp::internal
     BaseRegexMatcher<RegexMatcherCt<Specs>>
   {
     /// States of the machine
-    std::array<RegexMatcherDState,Specs.nDStates> dStates;
+    Array<RegexMatcherDState,Specs.nDStates> dStates;
     
     /// Transitions among states
-    std::array<RegexMatcherDStateTransition,Specs.nTransitions> transitions;
+    Array<RegexMatcherDStateTransition,Specs.nTransitions> transitions;
     
     /// Create from dynamic-sized lexer
     constexpr RegexMatcherCt(const RegexMatcher& oth)
@@ -2310,7 +2353,13 @@ namespace pp::internal
   struct GrammarProduction
   {
     /// Symbol on the lhs of the production
-    size_t iLhs;
+    size_t _iLhs;
+    
+    /// Returns _iLhs
+    constexpr inline const size_t& iLhs() const
+    {
+      return _iLhs;
+    }
     
     /// Symbols on the rhs of the production
     std::vector<size_t> iRhsList;
@@ -2320,6 +2369,12 @@ namespace pp::internal
     
     /// Name of the action to be accomplished when matching
     std::string_view action;
+    
+    /// Returns the number of symbols on the rhs
+    constexpr size_t nRhs() const
+    {
+      return iRhsList.size();
+    }
     
     /// Returns the precedence, or 0
     constexpr size_t precedence(const std::vector<GrammarSymbol>& symbols) const
@@ -2336,7 +2391,7 @@ namespace pp::internal
       /// Returned string
       std::string out;
       
-      out+=symbols[iLhs].name;
+      out+=symbols[iLhs()].name;
       out+=" :";
       
       for(const auto& iRhs : iRhsList)
@@ -2381,7 +2436,7 @@ namespace pp::internal
       /// Returned string
       std::string out;
       
-      out+=symbols[production.iLhs].name;
+      out+=symbols[production.iLhs()].name;
       out+=" :";
       
       for(size_t iIRhs=0,max=production.iRhsList.size();iIRhs<=max;iIRhs++)
@@ -2688,6 +2743,24 @@ namespace pp::internal
 							 const std::string& pref="") const
     {
       return describe(transitionsOfStates[iState][iTransition],pref);
+    }
+    
+    constexpr inline const GrammarState& state(const size_t& iState) const
+    {
+      return states[iState];
+    }
+    
+    /// Returns the number of nTransitions for the given state
+    constexpr size_t nTransitionsOfState(const size_t& iState) const
+    {
+      return transitionsOfStates[iState].size();
+    }
+    
+    /// Return the given transition for the required state
+    constexpr const GrammarTransition& transitionOfState(const size_t& iState,
+							 const size_t& iTransition) const
+    {
+      return transitionsOfStates[iState][iTransition];
     }
     
     /// Returns a reference to a production
@@ -3050,7 +3123,7 @@ namespace pp::internal
       
       for(GrammarProduction& p : productions)
 	{
-	  action(p.iLhs);
+	  action(p._iLhs);
 	  
 	  for(size_t& iRhs : p.iRhsList)
 	    action(iRhs);
@@ -3160,7 +3233,7 @@ namespace pp::internal
 		for(const size_t& iP : s.iProductions)
 		  {
 		    const GrammarProduction& p=productions[iP];
-		    diagnostic("  Processing production ",iP,", lhs: ",symbols[p.iLhs].name," before added: ",nAdded,", rhs size: ",p.iRhsList.size(),"\n");
+		    diagnostic("  Processing production ",iP,", lhs: ",symbols[p.iLhs()].name," before added: ",nAdded,", rhs size: ",p.iRhsList.size(),"\n");
 		    
 		    bool nonNullableFound=false;
 		    for(size_t iRhs=0;iRhs<p.iRhsList.size() and not nonNullableFound;iRhs++)
@@ -3596,7 +3669,7 @@ namespace pp::internal
       
       if(productionPrecedence==0 or symbol.precedence==0 or
 	 (symbol.precedence==productionPrecedence and symbol.associativity==GrammarSymbol::Associativity::NONE))
-	errorEmitter((std::string("shift/reduce conflict for '")+std::string(symbols[production.iLhs].name)+"' on '"+std::string(symbol.name)+
+	errorEmitter((std::string("shift/reduce conflict for '")+std::string(symbols[production.iLhs()].name)+"' on '"+std::string(symbol.name)+
 		      "' ought to transition: "+describe(transition)+"\nproduction precedence: "+std::to_string(productionPrecedence)+" symbol precedence: "+std::to_string(symbol.precedence)+" symbol associativity: "+std::to_string((int)symbol.associativity)).c_str());
       else
 	if(productionPrecedence>symbol.precedence or (symbol.precedence==productionPrecedence and symbol.associativity==GrammarSymbol::Associativity::RIGHT))
@@ -3627,7 +3700,7 @@ namespace pp::internal
       
       if(const size_t& transitionPrecedence=productions[transition.iStateOrProduction].precedence(symbols);productionPrecedence==0 or transitionPrecedence==0 or
 	 productionPrecedence==transitionPrecedence)
-	errorEmitter((std::string("reduce/reduce conflict for '")+std::string(symbols[production.iLhs].name)+"' on '"+std::string(symbol.name)+
+	errorEmitter((std::string("reduce/reduce conflict for '")+std::string(symbols[production.iLhs()].name)+"' on '"+std::string(symbol.name)+
 		      "' ought to transition: "+describe(transition)+"\nproduction precedence: "+std::to_string(productionPrecedence)+" transition precedence: "+std::to_string(transitionPrecedence)).c_str());
       else
 	if(productionPrecedence>transitionPrecedence)
@@ -3790,16 +3863,16 @@ namespace pp::internal
     BaseGrammar<GrammarCt<Specs>>
   {
     /// Symbols accepted by the grammar
-    std::array<BaseGrammarSymbol,Specs.nSymbols> symbols;
+    Array<BaseGrammarSymbol,Specs.nSymbols> symbols;
     
     /// Index of the symbols representing a production, for each state
     Stack2DVector<size_t,Specs.productionPars> productionsData;
     
     /// Action associated to each production
-    std::array<std::string_view,Specs.productionPars.nRows> actions;
+    Array<std::string_view,Specs.productionPars.nRows> actions;
     
     /// Items representing the states, defined in term of index of production and position
-    std::array<GrammarItem,Specs.nItems> items;
+    Array<GrammarItem,Specs.nItems> items;
     
     /// Index of the items representing a state, for each state
     Stack2DVector<size_t,Specs.stateItemsPars> stateIItemsData;
@@ -3811,7 +3884,7 @@ namespace pp::internal
     
     RegexMatcherCt<Specs.regexMachinePars> regexMatcher;
     
-    std::array<size_t,Specs.nRegexes> iSymbolOfRegex;
+    Array<size_t,Specs.nRegexes> iSymbolOfRegex;
     
     static_assert(Specs.transitionsOfStatesPars.nRows==Specs.stateItemsPars.nRows,"number of rows for transitionsOfStates and stateItems do not match");
     
@@ -3827,10 +3900,17 @@ namespace pp::internal
       return Specs.productionPars.nRows;
     }
     
-    /// Returns the number of productions
-    static constexpr size_t nTransitions()
+    /// Returns the number of nTranstitions
+    constexpr size_t nTransitionsOfState(const size_t& iState) const
     {
-      return Specs.productionPars.nRows;
+      return transitionsOfStatesData.rowSize(iState);
+    }
+    
+    /// Return the given transition for the required state
+    constexpr const GrammarTransition& transitionOfState(const size_t& iState,
+							 const size_t& iTransition) const
+    {
+      return transitionsOfStatesData(iState,iTransition);
     }
     
     /// Accessor to a production
@@ -3957,7 +4037,7 @@ namespace pp::internal
       /// Gets the number of item
       constexpr const size_t nTransitions() const
       {
-	return g->transitionsOfStatesData.rowSize(iState);
+	return g->nTransitionsOfState(iState);
       }
       
       /// Returns a reference to the iTransition-th transition
@@ -4051,7 +4131,7 @@ namespace pp::internal
 	const GrammarProduction& p=oth.productions[iProduction];
 	
 	std::vector<size_t> res(p.iRhsList.size()+1);
-	res[0]=p.iLhs;
+	res[0]=p.iLhs();
 	for(size_t iiRhs=0;iiRhs<p.iRhsList.size();iiRhs++)
 	  res[iiRhs+1]=p.iRhsList[iiRhs];
 	
@@ -4101,6 +4181,237 @@ namespace pp::internal
       estimateGrammarSize(str.str);
     
     return createGrammar<GS>(str.str);
+  }
+  
+  /// Specifications of the ParseTree
+  struct ParseTreeSpecs
+  {
+    /// Total number of nodes
+    const size_t nNodes;
+    
+    /// Detects if the ParseTree is empty
+    constexpr bool isNull() const
+    {
+      return nNodes==0;
+    }
+  };
+  
+  struct FlattenedParseTreeNode
+  {
+    std::pair<const char*,const char*> txtData;
+    
+    constexpr bool isReduce() const
+    {
+      return nSubNodes==0;
+    }
+    
+    constexpr std::string_view txt() const
+    {
+      return {txtData.first,txtData.second};
+    }
+    
+    size_t nSubNodes;
+  };
+  
+  struct ParseTreeNode
+  {
+    std::string_view txt;
+    
+    std::vector<ParseTreeNode> subNodes;
+  };
+  
+  template <ParseTreeSpecs Specs=ParseTreeSpecs{},
+    typename G>
+    constexpr auto createParseTree(const G& grammar,
+				   std::string_view input)
+  {
+    bool endReached=false;
+    bool m;
+    size_t i=0;
+    std::vector<size_t> states{0};
+    std::vector<size_t> symbols{};
+    size_t cursor=0;
+    
+    /// Holds a node in the parse tree of the expression
+    std::vector<ParseTreeNode> parsedSymbols;
+    
+    do
+      {
+	const size_t iState=states.back();
+	
+	diagnostic("/////////////////////////////////////////////////////////////////\n");
+	
+	diagnostic("At state: ",iState,"\n");
+	diagnostic(grammar.describeState(iState));
+	
+	for(size_t iTransition=0;iTransition<grammar.nTransitionsOfState(iState);iTransition++)
+	  diagnostic(grammar.describeStateTransition(iState,iTransition));
+	
+	size_t iNextSymbol=0;
+	
+	if(cursor<symbols.size())
+	  {
+	    iNextSymbol=symbols[cursor];
+	    diagnostic("No need to parse, nextToken from cursor: ",iNextSymbol,"=\"",grammar.symbols[iNextSymbol].name,"\"\n");
+	  }
+	else
+	  {
+	    diagnostic("Parsed ",i," tokens, going to parse: \"",input,"\"\n");
+	    
+	    if(input.empty())
+	      {
+		if(not endReached)
+		  {
+		    diagnostic("Reached the end of the string\n");
+		    endReached=true;
+		    iNextSymbol=grammar.iEndSymbol;
+		    symbols.emplace(symbols.begin()+cursor,iNextSymbol);
+		    m=true;
+		  }
+		else
+		  diagnostic("End of the string already reached\n");
+	      }
+	    else
+	      {
+		auto r=grammar.regexMatcher.match(input);
+		m=r.has_value();
+		
+		if(r)
+		  {
+		    input={input.begin()+r->matchedString.length(),input.end()};
+		    iNextSymbol=grammar.iSymbolOfRegex[r->iToken];
+		    if(iNextSymbol!=grammar.iWhitespaceSymbol)
+		      {
+			symbols.emplace(symbols.begin()+cursor,iNextSymbol);
+			parsedSymbols.push_back({r->matchedString});
+		      }
+		    
+		    diagnostic("matched string: \"",r->matchedString,"\" corresponding to symbol ",iNextSymbol," \"",grammar.symbols[iNextSymbol].name,"\"\n");
+		    i++;
+		  }
+		else
+		  errorEmitter("unable to match \"",input,"\"");
+	      }
+	  }
+	
+	if(m and iNextSymbol!=grammar.iWhitespaceSymbol)
+	  {
+	    size_t iTransition=0;
+	    while(iTransition<grammar.nTransitionsOfState(iState) and grammar.transitionOfState(iState,iTransition).iSymbol!=iNextSymbol)
+	      {
+		diagnostic("skipping transition ",grammar.describeStateTransition(iState,iTransition)," as ",grammar.transitionOfState(iState,iTransition).iSymbol,"!=",iNextSymbol,"\n");
+		iTransition++;
+	      }
+	    
+	    if(iTransition<grammar.nTransitionsOfState(iState))
+	      {
+		const GrammarTransition& t=grammar.transitionOfState(iState,iTransition);
+		const bool isReduce=t.type==GrammarTransition::Type::REDUCE;
+		
+		diagnostic("Going to use ",isReduce?"reduce ":"","transition: ",grammar.describeStateTransition(iState,iTransition),"\n");
+		if(isReduce)
+		  {
+		    const auto& production=grammar.production(t.iStateOrProduction);
+		    //states.pop_back();
+		    const size_t beg=cursor-production.nRhs();
+		    const size_t end=cursor;
+		    symbols.erase(symbols.begin()+beg,symbols.begin()+end);
+		    
+		    const std::string_view& action=grammar.action(t.iStateOrProduction);
+		    
+		    ParseTreeNode res{action,{std::make_move_iterator(parsedSymbols.begin()+beg),std::make_move_iterator(parsedSymbols.begin()+end)}};
+		    parsedSymbols.erase(parsedSymbols.begin()+beg,parsedSymbols.begin()+end);
+		    parsedSymbols.insert(parsedSymbols.begin()+beg,res);
+		    
+		    states.erase(states.end()-production.nRhs(),states.end());
+		    
+		    cursor-=production.nRhs();
+		    diagnostic("reduction ",action,"\n");
+		    symbols.emplace(symbols.begin()+cursor,production.iLhs());
+		  }
+		else
+		  {
+		    states.push_back(t.iStateOrProduction);
+		    cursor++;
+		  }
+		
+		diagnostic("States:\n");
+		for(const size_t& iState : states)
+		  diagnostic("   ",iState,"\n");
+		
+		diagnostic("Symbols:\n");
+		for(size_t iiSymbol=0;iiSymbol<symbols.size();iiSymbol++)
+		  {
+		    const size_t iSymbol=symbols[iiSymbol];
+		    
+		    diagnostic("   ",iSymbol," ",grammar.symbols[iSymbol].name,"\n");
+		    if(cursor==iiSymbol)
+		      diagnostic(".......\n");
+		  }
+	      }
+	    else
+	      errorEmitter("Unable to find grammar transition");
+	  }
+      }
+    while(m and not(states.size()==1 and states[0]==0 and symbols.size()==2 and symbols[0]==grammar.iStartSymbol and symbols[1]==grammar.iEndSymbol and input.length()==0));
+    
+    std::vector<FlattenedParseTreeNode> res;
+    
+    auto fill=
+      [&res](auto self,
+	     const ParseTreeNode& n)->void
+      {
+	for(const auto& s : n.subNodes)
+	  self(self,s);
+	
+	res.emplace_back(std::make_pair(n.txt.begin(),n.txt.end()),n.subNodes.size());
+      };
+    
+    fill(fill,parsedSymbols.front());
+    
+    if constexpr(Specs.isNull())
+      return res;
+    else
+      {
+	std::array<FlattenedParseTreeNode,Specs.nNodes> ctRes;
+	
+	std::copy(res.begin(),res.end(),ctRes.begin());
+	
+	return ctRes;
+      }
+  }
+  
+  /// Estimates the grammar size
+  template <typename G>
+  constexpr ParseTreeSpecs estimateParseTreeSize(const G& grammar,
+						 const std::string_view& input)
+  {
+    const std::vector<ParseTreeNode> parsedSymbols=
+      createParseTree(grammar,input);
+    
+    size_t t=0;
+    auto count=
+      [&t](auto self,
+	   const ParseTreeNode& n)->void
+      {
+	t++;
+	for(const auto& s : n.subNodes)
+	  self(self,s);
+      };
+    
+    count(count,parsedSymbols.front());
+    
+    return ParseTreeSpecs{t};
+  }
+  
+  template <auto grammar,
+	    CtString input>
+  constexpr auto createParseTree()
+  {
+    constexpr ParseTreeSpecs specs=
+      estimateParseTreeSize(grammar,input);
+    
+    return createParseTree<specs>(grammar,input);
   }
 }
 
