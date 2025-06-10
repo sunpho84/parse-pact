@@ -4200,10 +4200,7 @@ namespace pp::internal
   {
     std::pair<const char*,const char*> txtData;
     
-    constexpr bool isReduce() const
-    {
-      return nSubNodes==0;
-    }
+    bool isReduce;
     
     constexpr std::string_view txt() const
     {
@@ -4216,6 +4213,8 @@ namespace pp::internal
   struct ParseTreeNode
   {
     std::string_view txt;
+    
+    bool isReduce;
     
     std::vector<ParseTreeNode> subNodes;
   };
@@ -4283,7 +4282,7 @@ namespace pp::internal
 		    if(iNextSymbol!=grammar.iWhitespaceSymbol)
 		      {
 			symbols.emplace(symbols.begin()+cursor,iNextSymbol);
-			parsedSymbols.push_back({r->matchedString});
+			parsedSymbols.emplace_back(r->matchedString,false,std::vector<ParseTreeNode>{});
 		      }
 		    
 		    diagnostic("matched string: \"",r->matchedString,"\" corresponding to symbol ",iNextSymbol," \"",grammar.symbols[iNextSymbol].name,"\"\n");
@@ -4319,7 +4318,7 @@ namespace pp::internal
 		    
 		    const std::string_view& action=grammar.action(t.iStateOrProduction);
 		    
-		    ParseTreeNode res{action,{std::make_move_iterator(parsedSymbols.begin()+beg),std::make_move_iterator(parsedSymbols.begin()+end)}};
+		    ParseTreeNode res{action,isReduce,{std::make_move_iterator(parsedSymbols.begin()+beg),std::make_move_iterator(parsedSymbols.begin()+end)}};
 		    parsedSymbols.erase(parsedSymbols.begin()+beg,parsedSymbols.begin()+end);
 		    parsedSymbols.insert(parsedSymbols.begin()+beg,res);
 		    
@@ -4364,7 +4363,7 @@ namespace pp::internal
 	for(const auto& s : n.subNodes)
 	  self(self,s);
 	
-	res.emplace_back(std::make_pair(n.txt.begin(),n.txt.end()),n.subNodes.size());
+	res.emplace_back(std::make_pair(n.txt.begin(),n.txt.end()),n.isReduce,n.subNodes.size());
       };
     
     fill(fill,parsedSymbols.front());

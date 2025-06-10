@@ -142,10 +142,13 @@ using ProdNode=
 
 struct AssignNode;
 
+struct ForNode;
+
 struct ASTNodesNode;
 
 using ASTNode=
   std::variant<ASTNodesNode,
+	       ForNode,
 	       SymNode,
 	       UplusNode,
 	       UminusNode,
@@ -168,6 +171,11 @@ struct AssignNode
   std::string name;
   
   std::unique_ptr<ASTNode> rhs;
+};
+
+struct ForNode
+{
+  std::vector<std::unique_ptr<ASTNode>> subNodes;
 };
 
 struct SymNode
@@ -208,6 +216,24 @@ struct Evaluator
     varTable[assignNode.name]=std::visit(*this,*assignNode.rhs);
     
     return varTable[assignNode.name];
+  }
+  
+  Value operator()(const ForNode& forNode)
+  {
+    for(std::visit(*this,*forNode.subNodes[0]);
+    	std::visit([](const auto& v)
+	{
+	  if constexpr(std::is_convertible_v<decltype(v),bool>)
+	    return (bool)v;
+	  else
+	    errorEmitter("Cannot convert the type to bool");
+	  
+	  return false;
+	},std::visit(*this,*forNode.subNodes[1]));
+	std::visit(*this,*forNode.subNodes[2]))
+      std::visit(*this,*forNode.subNodes[3]);
+    
+    return std::monostate{};
   }
   
   Value operator()(const ASTNodesNode& astNodesNode)
@@ -310,39 +336,45 @@ int main()
   
   [[maybe_unused]]
   constexpr const char nissaGrammar[]=
-    "nissa {"
-    "   %whitespace \" *\";"
-    "   %right \"=\";"
-    "   %left \"\\+\";"
-    "   %left \"\\-\";"
-    "   %left \"\\*\";"
-	      "   document: document statement [appendStatement]"
-    "           | statement [firstStatement]"
-    "           ;"
-    "   statement: exprStatement \";\" [exprStatement]"
-    "            ;"
-    "   exprStatement: lhs \"=\" exprStatement [assign] "
-    "                | lhs \"=\" expr [assign] "
-    "                ;"
-    "   lhs: id [return]"
-    "      ;"
-    "   expr: expr \"\\*\" expr [product]"
-    "       | expr \"\\+\" expr [sum]"
-    "       | expr \"\\-\" expr [sub]"
-    "       | \"\\+\" expr [uplus]"
-    "       | \"\\-\" expr [uminus]"
-    "       | \"\\(\" expr \"\\)\" [bracket]"
-    "       | id [rhsSub]"
-    "       | str [return]"
-    "       | int [return]"
-    "       ;"
-    "   id: \"[a-zA-Z_][a-zA-Z0-9_]*\" [return]"
-    "     ;"
-    "   str: \"\\\"[^\\\"]*\\\"\" [storeString]"
-    "      ;"
-    "   int: \"[0-9]+\" [convToInt]"
-    "      ;"
-    "}";
+	      "nissa {"
+	      "   %whitespace \" *\";"
+	      "   %right \"=\";"
+	      "   %left \"\\+\";"
+	      "   %left \"\\-\";"
+	      "   %left \"\\*\";"
+	      "   statements: statements statement [appendStatement]"
+	      "             | [createStatements]"
+	      "             ;"
+	      "   statement: exprStatement [return]"
+	      "            | forStatement [return]"
+	      "            | \"{\" statements \"}\" [return1]"
+	      "            ;"
+	      "   exprStatement: expr \";\" [exprStatement]"
+	      "                ;"
+	      "   forStatement: \"for\" \"\\(\" expr \";\" expr \";\" expr \"\\)\" statement [forStatement]"
+	      "               ;"
+	      "   lhs: id [return]"
+	      "      ;"
+	      "   expr: assignExpr [return]"
+	      "       | expr \"\\*\" expr [product]"
+	      "       | expr \"\\+\" expr [sum]"
+	      "       | expr \"\\-\" expr [sub]"
+	      "       | \"\\+\" expr [uplus]"
+	      "       | \"\\-\" expr [uminus]"
+	      "       | \"\\(\" expr \"\\)\" [bracket]"
+	      "       | id [rhsSub]"
+	      "       | str [return]"
+	      "       | int [return]"
+	      "       ;"
+	      "   assignExpr: lhs \"=\" expr [assign] "
+	      "             ;"
+	      "   id: \"[a-zA-Z_][a-zA-Z0-9_]*\" [return]"
+	      "     ;"
+	      "   str: \"\\\"[^\\\"]*\\\"\" [storeString]"
+	      "      ;"
+	      "   int: \"[0-9]+\" [convToInt]"
+	      "      ;"
+	      "}";
   
   const auto nissa=createGrammar(nissaGrammar);
   
@@ -351,8 +383,9 @@ int main()
   auto pt=
     createParseTree(nissa,
 		    "A=-1*+3; B=-5*(2-A); C=B*A; "
-		    "D=\"ciao\";");
-
+		    "D=\"ciao\";"
+		    "for(i=0;i-1;i=i+1) {D=D+D;}");
+  
   std::string_view r("return");
   pt.back().txtData=std::make_pair(&*r.begin(),&*r.end());
   
@@ -361,22 +394,35 @@ int main()
   std::vector<std::unique_ptr<ASTNode>> stack;
   std::map<std::string,std::function<std::unique_ptr<ASTNode>(std::vector<std::unique_ptr<ASTNode>>&)>> actions;
   
-  actions["firstStatement"]=
+  actions["createStatements"]=
     [](std::vector<std::unique_ptr<ASTNode>>& subNodes)->std::unique_ptr<ASTNode>
     {
-      if(subNodes.size()!=1)
-	errorEmitter("expecting only 1 symbol");
+      if(subNodes.size()!=0)
+	errorEmitter("expecting 0 symbols");
       
-      return std::make_unique<ASTNode>(ASTNodesNode{.subNodes{std::move(subNodes)}});
+      return std::make_unique<ASTNode>(ASTNodesNode{});
     };
   
   actions["exprStatement"]=
     [](std::vector<std::unique_ptr<ASTNode>>& subNodes)->std::unique_ptr<ASTNode>
     {
       if(subNodes.size()!=2)
-	errorEmitter("expecting exactly 1 symbols");
+	errorEmitter("expecting exactly 2 symbols");
       
       return std::move(subNodes[0]);
+    };
+  
+  actions["forStatement"]=
+    [](std::vector<std::unique_ptr<ASTNode>>& subNodes)->std::unique_ptr<ASTNode>
+    {
+      if(subNodes.size()!=9)
+	errorEmitter("expecting 9 symbols, obtained ",subNodes.size());
+      
+      std::unique_ptr<ASTNode> res=std::make_unique<ASTNode>(ForNode());
+      for(const int& i : {2,4,6,8})
+	std::get_if<ForNode>(&*res)->subNodes.emplace_back(std::move(subNodes[i]));
+      
+      return res;
     };
   
   actions["appendStatement"]=
@@ -404,6 +450,15 @@ int main()
 	errorEmitter("expecting only 1 symbol");
       
       return std::move(subNodes[0]);
+    };
+  
+  actions["return1"]=
+    [](std::vector<std::unique_ptr<ASTNode>>& subNodes)->std::unique_ptr<ASTNode>
+    {
+      if(subNodes.size()<2)
+	errorEmitter("expecting only 2 symbols");
+      
+      return std::move(subNodes[1]);
     };
   
   actions["convToInt"]=
@@ -530,8 +585,8 @@ int main()
     return std::make_unique<ASTNode>(SymNode{.name=*name});
   };
   
-  for(const auto& [txt,n] : pt)
-    if(const std::string_view tmp{txt.first,txt.second};n==0)
+  for(const auto& [txt,isReduce,n] : pt)
+    if(const std::string_view tmp{txt.first,txt.second};not isReduce)
       {
 	diagnostic("Push string: ",tmp,"\n");
 	stack.push_back(std::make_unique<ASTNode>(ValueNode(std::string(tmp))));

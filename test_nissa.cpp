@@ -146,7 +146,7 @@ struct Process<Head,
   template <typename...Stack>
   static constexpr auto eval(Stack&&...stack)
   {
-    if constexpr(Head.nSubNodes==0)
+    if constexpr(Head.nSubNodes==0) error, now use isreduce
       {
 	diagnostic("Shifting symbol \"",Head.txt(),"\n");
 	
