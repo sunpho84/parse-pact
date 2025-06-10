@@ -144,11 +144,14 @@ struct AssignNode;
 
 struct ForNode;
 
+struct IfNode;
+
 struct ASTNodesNode;
 
 using ASTNode=
   std::variant<ASTNodesNode,
 	       ForNode,
+	       IfNode,
 	       SymNode,
 	       UplusNode,
 	       UminusNode,
@@ -174,6 +177,11 @@ struct AssignNode
 };
 
 struct ForNode
+{
+  std::vector<std::unique_ptr<ASTNode>> subNodes;
+};
+
+struct IfNode
 {
   std::vector<std::unique_ptr<ASTNode>> subNodes;
 };
@@ -216,6 +224,24 @@ struct Evaluator
     varTable[assignNode.name]=std::visit(*this,*assignNode.rhs);
     
     return varTable[assignNode.name];
+  }
+  
+  Value operator()(const IfNode& ifNode)
+  {
+    if(std::visit([](const auto& v)
+	{
+	  if constexpr(std::is_convertible_v<decltype(v),bool>)
+	    return (bool)v;
+	  else
+	    errorEmitter("Cannot convert the type to bool");
+	  
+	  return false;
+	},std::visit(*this,*ifNode.subNodes[0])))
+      std::visit(*this,*ifNode.subNodes[1]);
+    else
+      std::visit(*this,*ifNode.subNodes[2]);
+    
+    return std::monostate{};
   }
   
   Value operator()(const ForNode& forNode)
@@ -334,6 +360,8 @@ int main()
   // using namespace pp;
   // using namespace pp::internal;
   
+  // it will be convenient to keep track of this https://cs.wmich.edu/~gupta/teaching/cs4850/sumII06/The%20syntax%20of%20C%20in%20Backus-Naur%20form.htm
+  
   [[maybe_unused]]
   constexpr const char nissaGrammar[]=
 	      "nissa {"
@@ -342,17 +370,33 @@ int main()
 	      "   %left \"\\+\";"
 	      "   %left \"\\-\";"
 	      "   %left \"\\*\";"
+	      "   %none lowerThanElse;"
+	      "   %none \"else\";"
 	      "   statements: statements statement [appendStatement]"
 	      "             | [createStatements]"
 	      "             ;"
 	      "   statement: exprStatement [return]"
 	      "            | forStatement [return]"
+	      "            | ifStatement [return]"
 	      "            | \"{\" statements \"}\" [return1]"
 	      "            ;"
 	      "   exprStatement: expr \";\" [exprStatement]"
+	      "                | \";\""
 	      "                ;"
-	      "   forStatement: \"for\" \"\\(\" expr \";\" expr \";\" expr \"\\)\" statement [forStatement]"
+	      "   forStatement: \"for\" \"\\(\" forInit \";\" forCheck \";\" forIncr \"\\)\" statement [forStatement]"
 	      "               ;"
+	      "   forInit: expr [return]"
+	      "          |"
+	      "          ;"
+	      "   forCheck: expr [return]"
+	      "          |"
+	      "          ;"
+	      "   forIncr: expr [return]"
+	      "          |"
+	      "          ;"
+	      "   ifStatement: \"if\" \"\\(\" expr \"\\)\" statement %precedence lowerThanElse [ifStatement]"
+	      "              | \"if\" \"\\(\" expr \"\\)\" statement \"else\" statement [ifElseStatement]"
+	      "              ;"
 	      "   lhs: id [return]"
 	      "      ;"
 	      "   expr: assignExpr [return]"
@@ -382,9 +426,9 @@ int main()
   
   auto pt=
     createParseTree(nissa,
-		    "A=-1*+3; B=-5*(2-A); C=B*A; "
+		    "A=-1*+3; B=-5*(2-A); if(0)C=B*A; else T=11;"
 		    "D=\"ciao\";"
-		    "for(i=0;i-1;i=i+1) {D=D+D;}");
+		    "for(i=0;i-1;i=i+1) for(j=0;j-2;j=j+1){D=D+\" \"+D;}");
   
   std::string_view r("return");
   pt.back().txtData=std::make_pair(&*r.begin(),&*r.end());
@@ -421,6 +465,34 @@ int main()
       std::unique_ptr<ASTNode> res=std::make_unique<ASTNode>(ForNode());
       for(const int& i : {2,4,6,8})
 	std::get_if<ForNode>(&*res)->subNodes.emplace_back(std::move(subNodes[i]));
+      
+      return res;
+    };
+  
+  actions["ifStatement"]=
+    [](std::vector<std::unique_ptr<ASTNode>>& subNodes)->std::unique_ptr<ASTNode>
+    {
+      if(subNodes.size()!=5)
+	errorEmitter("expecting 5 symbols, obtained ",subNodes.size());
+      
+      std::unique_ptr<ASTNode> res=std::make_unique<ASTNode>(IfNode());
+      for(const int& i : {2,4})
+	std::get_if<IfNode>(&*res)->subNodes.emplace_back(std::move(subNodes[i]));
+      
+      std::get_if<IfNode>(&*res)->subNodes.emplace_back(std::make_unique<ASTNode>(ASTNodesNode()));
+      
+      return res;
+    };
+  
+  actions["ifElseStatement"]=
+    [](std::vector<std::unique_ptr<ASTNode>>& subNodes)->std::unique_ptr<ASTNode>
+    {
+      if(subNodes.size()!=7)
+	errorEmitter("expecting 7 symbols, obtained ",subNodes.size());
+      
+      std::unique_ptr<ASTNode> res=std::make_unique<ASTNode>(IfNode());
+      for(const int& i : {2,4,6})
+	std::get_if<IfNode>(&*res)->subNodes.emplace_back(std::move(subNodes[i]));
       
       return res;
     };

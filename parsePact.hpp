@@ -3359,7 +3359,7 @@ namespace pp::internal
 	      if(symbols[iRhs].type==GrammarSymbol::Type::TERMINAL_SYMBOL)
 		{
 		  p.precedenceSymbol=iRhs;
-		  diagnostic(" precedence symbol: ",symbols[iRhs].name,"\n");
+		  diagnostic(" precedence symbol: ",symbols[iRhs].name," precedence: ",symbols[iRhs].precedence,"\n");
 		}
 	    }
 	}
@@ -3670,23 +3670,23 @@ namespace pp::internal
       if(productionPrecedence==0 or symbol.precedence==0 or
 	 (symbol.precedence==productionPrecedence and symbol.associativity==GrammarSymbol::Associativity::NONE))
 	errorEmitter((std::string("shift/reduce conflict for '")+std::string(symbols[production.iLhs()].name)+"' on '"+std::string(symbol.name)+
-		      "' ought to transition: "+describe(transition)+"\nproduction precedence: "+std::to_string(productionPrecedence)+" symbol precedence: "+std::to_string(symbol.precedence)+" symbol associativity: "+std::to_string((int)symbol.associativity)).c_str());
+		      "' ought to transition: "+describe(transition)+"\nproduction precedence: "+std::to_string(productionPrecedence)+" symbol precedence: "+std::to_string(symbol.precedence)+" symbol associativity: "+std::to_string((int)symbol.associativity)).c_str(),"\n");
       else
 	if(productionPrecedence>symbol.precedence or (symbol.precedence==productionPrecedence and symbol.associativity==GrammarSymbol::Associativity::RIGHT))
 	  {
 	    diagnostic("overriding shift ",describe(transition));
 	    transition.type=GrammarTransition::REDUCE;
 	    transition.iStateOrProduction=iProduction;
-	    diagnostic(" into reduce: ",describe(transition));
+	    diagnostic(" into reduce: ",describe(transition),"\n");
 	  }
 	else
 	  {
-	    diagnostic("leaving already esisting transition ",describe(transition)," given that ");
+	    diagnostic("leaving already esisting transition ",describe(transition)," given that");
 	    if(productionPrecedence<symbol.precedence)
-	      diagnostic(" the production has precedence ",productionPrecedence," lesser than the symbol ",symbol.precedence);
+	      diagnostic(" the production has precedence ",productionPrecedence," lesser than the symbol ",symbol.precedence,"\n");
 	    else
-	      diagnostic(" the production has the same precedence ",productionPrecedence," of the symbol ,which has associatity",(int)symbol.associativity,
-			 " different from right (",(int)GrammarSymbol::Associativity::RIGHT);
+	      diagnostic(" the production has the same precedence ",productionPrecedence," of the symbol, which has associatity ",(int)symbol.associativity,
+			 " different from right (",(int)GrammarSymbol::Associativity::RIGHT,"\n");
 	  }
     }
     
