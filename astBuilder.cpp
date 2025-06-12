@@ -1,4 +1,5 @@
 #include <cmath>
+#include <deque>
 #include <memory>
 #include <parsePact.hpp>
 
@@ -210,7 +211,59 @@ struct BinOpNode
   std::unique_ptr<ASTNode> op2;
 };
 
-std::unordered_map<std::string,Value> varTable;
+using VarTable=
+  std::unordered_map<std::string,Value>;
+
+struct VarTables
+{
+  std::deque<VarTable> stack;
+  
+  void push()
+  {
+    stack.emplace_front();
+  }
+  
+  void pop()
+  {
+    stack.pop_front();
+  }
+  
+  std::optional<Value*> find(const std::string& name)
+  {
+    for(auto& leaf : stack)
+      if(auto it=leaf.find(name);it!=leaf.end())
+	return &it->second;
+    
+    return {};
+  }
+  
+  Value& operator[](const std::string& name)
+  {
+    if(auto f=find(name))
+      return **f;
+    else
+      return stack.front()[name];
+  }
+  
+  void print()
+  {
+    size_t i=0;
+    for(VarTable& varTable : stack)
+      {
+	diagnostic("----- ",i++," -----\n");
+	for(const auto& [name,v] : varTable)
+	  std::visit([&name](const auto& v)
+	  {
+	    if constexpr(Streamable<decltype(v)>)
+	      diagnostic(name,"=",v,"\n");
+	    else
+	      errorEmitter("Unprintable type ",typeid(decltype(v)).name());
+	  },v);
+      }
+  }
+};
+
+VarTables varTables;
 
 struct Evaluator
 {
@@ -221,13 +274,17 @@ struct Evaluator
   
   Value operator()(const AssignNode& assignNode)
   {
-    varTable[assignNode.name]=std::visit(*this,*assignNode.rhs);
+    Value& v=varTables[assignNode.name];
     
-    return varTable[assignNode.name];
+    return v=std::visit(*this,*assignNode.rhs);
+    
+    return v;
   }
   
   Value operator()(const IfNode& ifNode)
   {
+    varTables.push();
+    
     if(std::visit([](const auto& v)
 	{
 	  if constexpr(std::is_convertible_v<decltype(v),bool>)
@@ -241,11 +298,15 @@ struct Evaluator
     else
       std::visit(*this,*ifNode.subNodes[2]);
     
+    varTables.pop();
+    
     return std::monostate{};
   }
   
   Value operator()(const ForNode& forNode)
   {
+    varTables.push();
+    
     for(std::visit(*this,*forNode.subNodes[0]);
     	std::visit([](const auto& v)
 	{
@@ -259,26 +320,33 @@ struct Evaluator
 	std::visit(*this,*forNode.subNodes[2]))
       std::visit(*this,*forNode.subNodes[3]);
     
+    varTables.pop();
+    
     return std::monostate{};
   }
   
   Value operator()(const ASTNodesNode& astNodesNode)
   {
+    varTables.push();
+    
     for(const std::unique_ptr<ASTNode>& astNode : astNodesNode.subNodes)
       std::visit(*this,*astNode);
+    
+    if(varTables.stack.size()>1)
+      varTables.pop();
     
     return std::monostate{};
   }
   
   Value operator()(const SymNode& symNode)
   {
-    const auto& v=
-      varTable.find(symNode.name);
+    const auto v=
+      varTables.find(symNode.name);
     
-    if(v==varTable.end())
+    if(not v.has_value())
       errorEmitter("using uninitialized variable ",symNode.name);
     
-    return varTable[symNode.name];
+    return **v;
   }
   
   template <typename T>
@@ -341,21 +409,156 @@ T& fetch(std::vector<std::unique_ptr<ASTNode>>& subNodes,
   return *s;
 }
 
+void c()
+{
+  const char cGrammar[]=
+    "c {"
+    "   %whitespace \" +\";"
+    "   %left \",\";"
+    "   %right \"=\";"
+    "   %right \"\\+=\";"
+    "   %right \"-=\";"
+    "   %right \"\\*=\";"
+    "   %right \"/=\";"
+    "   %left \"\\|\\|\";"
+    "   %left \"&&\";"
+    "   %left \"==\";"
+    "   %left \"!=\";"
+    "   %left \"<\";"
+    "   %left \"<=\";"
+    "   %left \">\";"
+    "   %left \">=\";"
+    "   %left \"\\+\";"
+    "   %left \"-\";"
+    "   %left \"\\*\";"
+    "   %left \"/\";"
+    "   %right \"!\";"
+    "   %left \"--\";"
+    "   %left \"\\+\\+\";"
+    "   %none FUNCTION_CALL;"
+    ""
+    "   statement : expression_statement"
+    "             | compound_statement"
+    "             ;"
+    "    compound_statement : \"{\" statements \"}\""
+    "                       ;"
+    "    statements : "
+    "               | statements statement"
+    "               ;"
+    "    expression_statement : expression \";\""
+    "                           ;"
+    "    expression : logical_or_expression"
+    "               | unary_expression assignment_operator expression"
+    "               ;"
+    "    logical_or_expression : logical_and_expression"
+    "                           | logical_or_expression \"\\|\\|\" logical_and_expression"
+    "                           ;"
+    "    logical_and_expression : equality_expression"
+    "                            | logical_and_expression \"&&\" equality_expression"
+    "                            ;"
+    "    equality_expression : relational_expression"
+    "                          | equality_expression \"==\" relational_expression"
+    "                          | equality_expression \"!=\" relational_expression"
+    "                          ;"
+    "    relational_expression : additive_expression %precedence \"<=\""
+    "                           | relational_expression \"<\" additive_expression"
+    "                           | relational_expression \">\" additive_expression"
+    "                           | relational_expression \"<=\" additive_expression"
+    "                           | relational_expression \">=\" additive_expression"
+    "                           ;"
+    "    additive_expression : multiplicative_expression"
+    "                          | additive_expression \"\\+\" multiplicative_expression"
+    "                          | additive_expression \"-\" multiplicative_expression"
+    "                          ;"
+    "    multiplicative_expression : unary_expression"
+    "                                | multiplicative_expression \"\\*\" unary_expression"
+    "                                | multiplicative_expression \"/\" unary_expression"
+    "                                | multiplicative_expression \"%\" unary_expression"
+    "                                ;"
+    "    unary_expression : postfix_expression"
+    "                       | \"\\+\" unary_expression"
+    "                       | \"-\" unary_expression"
+    "                       | \"!\" unary_expression"
+    "                       ;"
+    "    postfix_expression : primary_expression"
+    "                         | postfix_expression \"\\+\\+\""
+    "                         | postfix_expression \"--\""
+    "                         ;"
+    "    argument_expressions : expression"
+    "                         | argument_expressions \",\" expression"
+    "                         ;"
+    "    primary_expression : identifier"
+    "                        | integer_constant"
+    "                        | character_constant"
+    "                        | floating_constant"
+    "                        | string"
+    "                        | \"\\(\" expression \"\\)\""
+    "                        | function_call"
+    "                        ;"
+    "    function_call : identifier \"\\(\" argument_expressions \"\\)\" %precedence FUNCTION_CALL"
+    "                  ;"
+    "    assignment_operator : \"=\""
+    "                         | \"\\*=\""
+    "                         | \"/=\""
+    "                         | \"\\+=\""
+    "                         | \"-=\""
+    "                         ;"
+    "    identifier : \"[a-zA-Z_][a-zA-Z0-9_]*\""
+    "              ;"
+    "    integer_constant : \"[0-9]+\""
+    "                     ;"
+    "    character_constant : \"'[^']*'\""
+    "                       ;"
+    "    floating_constant : \"[0-9]+(\\.[0-9]+)?((e|E)(\\+|\\-)?[0-9]+)?\""
+    "                      ;"
+    "    string : \"\\\"[^\\\"]*\\\"\""
+    "           ;"
+    "}";
+  
+  const char simpleCGrammar[]=
+    "c {"
+    "   %whitespace \" +\";"
+    ""
+    "    expression : identifier [RETURN]"
+    "               | \"\\(\" expression \"\\)\" [BRACKET]"
+    "               | function_call [RETURN]"
+    "               ;"
+    "    function_call : identifier \"\\(\" argument_expressions \"\\)\"[CALL]"
+    "                  ;"
+    "    argument_expressions : [NO_EXPRESSION]"
+    "                         |expression [FIRST_EXPRESSION]"
+    "                         | argument_expressions \",\" expression [PUSH_EXPRESSION]"
+    "                         ;"
+    "    identifier : \"[a-zA-Z_][a-zA-Z0-9_]*\" [IDENTIFIER]"
+    "              ;"
+    "}";
+  
+  const auto c=createGrammar(cGrammar);
+  
+  auto pt=
+    createParseTree(c,
+		    "{A=-1*+3; B=-5*(2-A); C=B*A; T=11;"
+		    "D=\"ciao\"; (E); F(A);F(A,B);}");
+  
+  for(const auto& [txt,isReduce,n] : pt)
+    if(const std::string_view tmp{txt.first,txt.second};not isReduce)
+	diagnostic("Push string: ",tmp,"\n");
+    else
+      diagnostic("Reducing ",n," symbols from stack with action ",tmp,"\n");
+}
+
 int main()
 {
+  c();
+
+  return 0;
+  
   // ASTNode a=AssignNode{.name="A",
   //   .rhs=std::make_unique<ASTNode>(SumNode{.op1=std::make_unique<ASTNode>(ValueNode(5)),
   // 					   .op2=std::make_unique<ASTNode>(ValueNode(-3))})};
   
   // Evaluator ev;
   // std::visit(ev,a);
-  
-  for(auto& [t,v] : varTable)
-    std::visit([t](const auto& v)
-    {
-      if constexpr(not std::is_same_v<std::decay_t<decltype(v)>,std::monostate>)
-	diagnostic(t," ",v,"\n");
-    },v);
   
   // using namespace pp;
   // using namespace pp::internal;
@@ -697,14 +900,8 @@ int main()
   
   std::visit(e,*stack[0]);
   
-  for(const auto& [name,v] : varTable)
-    std::visit([&name](const auto& v)
-    {
-      if constexpr(Streamable<decltype(v)>)
-	diagnostic(name,"=",v,"\n");
-      else
-	errorEmitter("Unprintable type ",typeid(decltype(v)).name());
-    },v);
+  diagnostic("FINALE\n");
+  varTables.print();
   
   return 0;
 }
