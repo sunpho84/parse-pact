@@ -1,11 +1,14 @@
 #include <cmath>
+#include <cstdio>
 #include <deque>
+#include <filesystem>
 #include <memory>
 #include <parsePact.hpp>
 
 #include <functional>
 #include <set>
 #include <map>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
@@ -413,7 +416,9 @@ void c()
 {
   const char cGrammar[]=
     "c {"
-    "   %whitespace \" +\";"
+    "   %whitespace \"[ |\\n\\t]+\";"
+    "   %none lowerThanElse;"
+    "   %none \"else\";"
     "   %left \",\";"
     "   %right \"=\";"
     "   %right \"\\+=\";"
@@ -439,7 +444,24 @@ void c()
     ""
     "   statement : expression_statement"
     "             | compound_statement"
+    "             | forStatement"
+    "             | ifStatement"
+    "             | function_call compound_statement"
     "             ;"
+    "   forStatement: \"for\" \"\\(\" forInit \";\" forCheck \";\" forIncr \"\\)\" statement [forStatement]"
+    "               ;"
+    "   forInit: expression [return]"
+    "          |"
+    "          ;"
+    "   forCheck: expression [return]"
+    "          |"
+    "          ;"
+    "   forIncr: expression [return]"
+    "          |"
+    "          ;"
+    "   ifStatement: \"if\" \"\\(\" expression \"\\)\" statement %precedence lowerThanElse [ifStatement]"
+    "              | \"if\" \"\\(\" expression \"\\)\" statement \"else\" statement [ifElseStatement]"
+    "              ;"
     "    compound_statement : \"{\" statements \"}\""
     "                       ;"
     "    statements : "
@@ -535,10 +557,30 @@ void c()
   
   const auto c=createGrammar(cGrammar);
   
+  diagnostic("Grammar info, nstates: ",c.states.size(),"\n");
+  diagnostic("Lexer info, nDstates: ",c.regexMatcher.dStates.size(),"\n");
+  
+  std::vector<char> ext;
+  if(const char* path="/home/francesco/trastulli/parse-pact/example";
+     std::filesystem::exists(path)){
+    
+    const size_t exs=std::filesystem::file_size(path);
+    ext.resize(exs+1);
+    if(FILE* file=fopen(path,"r"))
+      {
+	if(const size_t n=fread(&ext[0],1,exs,file);n!=exs)
+	  errorEmitter("expected ",exs," obtained ",n);
+	ext[exs]='\0';
+	fclose(file);
+      }
+    else
+      errorEmitter("unable to read ",path);
+  }
+  else
+    errorEmitter("file ",path," does not exists");
+  
   auto pt=
-    createParseTree(c,
-		    "{A=-1*+3; B=-5*(2-A); C=B*A; T=11;"
-		    "D=\"ciao\"; (E); F(A);F(A,B);}");
+    createParseTree(c,&ext[0]);
   
   for(const auto& [txt,isReduce,n] : pt)
     if(const std::string_view tmp{txt.first,txt.second};not isReduce)
