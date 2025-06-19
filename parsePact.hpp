@@ -1604,7 +1604,7 @@ namespace pp::internal
 	      if(negated)
 		matchableChars.negate();
 	      
-	      diagnostic("matched ]\n");
+	      diagnostic("range end after matched: \']\'\n");
 	      
 	      /// Result to be returned, containing a nested list of OR nodes
 	      std::optional<RegexParseTreeNode> res;
@@ -1681,7 +1681,10 @@ namespace pp::internal
       
       if(m)
 	if(const char c=regexStr.matchAnyCharIn("+?*"))
-	  m=RegexParseTreeNode{(c=='+')?NONZERO:((c=='?')?OPT:MANY),{std::move(*m)}};
+	  {
+	    diagnostic("Matched postfix \'",c,"\'\n");
+	    m=RegexParseTreeNode{(c=='+')?NONZERO:((c=='?')?OPT:MANY),{std::move(*m)}};
+	  }
       
       return m;
     }
@@ -1708,7 +1711,7 @@ namespace pp::internal
 	matchAndParsePossiblyAndedExpr();
       
       if(auto undoer=regexStr.beginTemptativeMatch("orExprSecondPart",false);regexStr.matchChar('|'))
-	if(std::optional<RegexParseTreeNode> rhs=matchAndParsePossiblyAndedExpr();(undoer.state=rhs.has_value()))
+	if(std::optional<RegexParseTreeNode> rhs=matchAndParsePossiblyOrredExpr();(undoer.state=rhs.has_value()))
 	  return RegexParseTreeNode{RegexParseTreeNode::Type::OR,{std::move(*lhs),std::move(*rhs)}};
       
       return lhs;
@@ -1748,7 +1751,7 @@ namespace pp::internal
       for(size_t iRegex=0;iRegex<regexes.size();iRegex++)
 	{
 	  const std::string_view& regex=regexes[iRegex];
-	  diagnostic("Getting the parse tree of regex ",regex,"\n");
+	  diagnostic("Getting the parse tree of regex \"",regex,"\"\n");
 	  
 	  if(std::optional<RegexParseTreeNode> t=RegexParseTreeBuilder::parseRegex(regex,iRegex))
 	    if(res)
@@ -3656,7 +3659,7 @@ namespace pp::internal
 					  const size_t& iProduction)
     {
       transitions.push_back(GrammarTransition::getReduce(iSymbol,iProduction));
-      diagnostic("        inserting new reduce transitions\n");
+      diagnostic("        inserting new reduce transitions \"",describe(production(iProduction)),"\"\n");
     }
     
     /// Try to solve a shift/reduce conflict
@@ -3669,7 +3672,7 @@ namespace pp::internal
       
       if(productionPrecedence==0 or symbol.precedence==0 or
 	 (symbol.precedence==productionPrecedence and symbol.associativity==GrammarSymbol::Associativity::NONE))
-	errorEmitter((std::string("shift/reduce conflict for '")+std::string(symbols[production.iLhs()].name)+"' on '"+std::string(symbol.name)+
+	errorEmitter((std::string("shift/reduce conflict for '")+describe(production)+"' on symbol '"+std::string(symbol.name)+
 		      "' ought to transition: "+describe(transition)+"\nproduction precedence: "+std::to_string(productionPrecedence)+" symbol precedence: "+std::to_string(symbol.precedence)+" symbol associativity: "+std::to_string((int)symbol.associativity)).c_str(),"\n");
       else
 	if(productionPrecedence>symbol.precedence or (symbol.precedence==productionPrecedence and symbol.associativity==GrammarSymbol::Associativity::RIGHT))
