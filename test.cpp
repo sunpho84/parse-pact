@@ -77,7 +77,7 @@ int main(int narg,char** arg)
   
   static constexpr char jsonGrammar[]=
   "json {\
-     %whitespace \"[ \\t\\r\\n]*\";\
+     %whitespace \"( \\t\\r\\n)*\";\
      document: '{' attributes '}' [document] | ;\
      attributes: attributes ',' attribute [add_to_object] | attribute [create_object] | ;\
      attribute: name ':' value [attribute];\
@@ -116,7 +116,7 @@ int main(int narg,char** arg)
   
   static constexpr char xmlGrammar[]=
     "xml {\
-   %whitespace \"[ \\t\\r\\n]+\";\
+   %whitespace \"( \\t\\r\\n)+\";\
    %left '<' '>';\
    %left name;\
    document: prolog element [document];\
@@ -304,12 +304,12 @@ int main(int narg,char** arg)
 
 //   constexpr char jsonText[]=/* Some json text*/;
   
-//   constexpr auto parsedData=jsonGrammarParser(jsonText);
+//   constexpr auto parsedData=jsonxGrammarParser(jsonText);
 
 //   static_assert(parsedData.myParameter==42,"Check at compile failed");
   
 //   constexpr char rrr[]="error_handling_calculator {\
-//     %whitespace \"[ \\t\\r\\n]*\";\
+//     %whitespace \"( \\t\\r\\n)*\";\
 //     %none error;\
 //     %left '(' ')';\
 //     %left '+' '-';\

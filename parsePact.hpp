@@ -1233,7 +1233,7 @@ namespace pp::internal
       return matchLiteralOrRegex('"');
     }
     
-    /// Matches an identifier
+    /// Matches an identifier: [_a-zA-Z][a-zA-Z0-9]*
     constexpr std::string_view matchId()
     {
       auto matchRes=
@@ -2911,14 +2911,12 @@ namespace pp::internal
 		  std::string_view action{};
 		  if(matchin.matchChar('['))
 		    {
-		      matchin.matchWhiteSpaceOrComments();
+		      auto beg=matchin.ref.begin();
+		      while(const char c=matchin.matchPossiblyEscapedCharNotIn("]"))
+			diagnostic("including char '",c,"' in the action");
 		      
-		      if(action=matchin.matchId();action.empty())
-			errorEmitter("Expected identifier to be used as action");
+		      action={beg,matchin.ref.begin()};
 		      
-		      diagnostic("matched action: \"",action,"\"\n");
-		      
-		      matchin.matchWhiteSpaceOrComments();
 		      if(not matchin.matchChar(']'))
 			errorEmitter("Expected end of action ']'");
 		      
@@ -3473,7 +3471,7 @@ namespace pp::internal
 	  
 	  diagnostic("--\n");
 	  
-	  diagnostic("State:\n",describe(state));
+	  diagnostic("State ",iState,":\n",describe(state));
 	  diagnostic("has ",transitionsOfStates[iState].size()," transitions:\n");
 	  
 	  for(const GrammarTransition& t : transitionsOfStates[iState])
@@ -3704,7 +3702,7 @@ namespace pp::internal
       if(const size_t& transitionPrecedence=productions[transition.iStateOrProduction].precedence(symbols);productionPrecedence==0 or transitionPrecedence==0 or
 	 productionPrecedence==transitionPrecedence)
 	errorEmitter((std::string("reduce/reduce conflict for '")+std::string(symbols[production.iLhs()].name)+"' on '"+std::string(symbol.name)+
-		      "' ought to transition: "+describe(transition)+"\nproduction precedence: "+std::to_string(productionPrecedence)+" transition precedence: "+std::to_string(transitionPrecedence)).c_str());
+		      "' ought to transition: \n\t"+describe(transition)+"\nproduction precedence: "+std::to_string(productionPrecedence)+" transition precedence: "+std::to_string(transitionPrecedence)).c_str());
       else
 	if(productionPrecedence>transitionPrecedence)
 	  {
@@ -3750,7 +3748,7 @@ namespace pp::internal
 			
 			if(not itemDescribed)
 			  {
-			    diagnostic("   in item ",describe(item),"\n     reduces:\n");
+			    diagnostic("   in item:\n\t",describe(item),"\nreduces:\n");
 			    itemDescribed=true;
 			  }
 			
@@ -3766,7 +3764,7 @@ namespace pp::internal
 			  insertReduceTransition(transitions,iSymbol,iProduction);
 			else
 			  {
-			    diagnostic("!!!!panic! state\n",describe(state)," has already transition:\n",describe(transitions[iTransition])," for symbol \'",symbol.name,"\'\n");
+			    diagnostic("!!!!panic! trying to include production\n\t",describe(productions[iProduction]),", the state:\n",describe(state)," has already transition:\n\t",describe(transitions[iTransition]),"for symbol \'",symbol.name,"\'\n");
 			    
 			    if(GrammarTransition& transition=transitions[iTransition];transition.type==GrammarTransition::Type::SHIFT)
 			      dealWithShiftReduceConflict(transition,symbol,iProduction);
@@ -4313,13 +4311,15 @@ namespace pp::internal
 		diagnostic("Going to use ",isReduce?"reduce ":"","transition: ",grammar.describeStateTransition(iState,iTransition),"\n");
 		if(isReduce)
 		  {
-		    const auto& production=grammar.production(t.iStateOrProduction);
+		    const auto& production=
+		      grammar.production(t.iStateOrProduction);
 		    //states.pop_back();
 		    const size_t beg=cursor-production.nRhs();
 		    const size_t end=cursor;
 		    symbols.erase(symbols.begin()+beg,symbols.begin()+end);
 		    
-		    const std::string_view& action=grammar.action(t.iStateOrProduction);
+		    const std::string_view& action=
+		      grammar.action(t.iStateOrProduction);
 		    
 		    ParseTreeNode res{action,isReduce,{std::make_move_iterator(parsedSymbols.begin()+beg),std::make_move_iterator(parsedSymbols.begin()+end)}};
 		    parsedSymbols.erase(parsedSymbols.begin()+beg,parsedSymbols.begin()+end);
