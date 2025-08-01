@@ -1,5 +1,5 @@
+#include <cmath>
 #include <cstddef>
-#include <cstdio>
 #include <filesystem>
 #include <memory>
 #include <parsePact.hpp>
@@ -12,6 +12,9 @@
 #include <variant>
 
 using namespace pp::internal;
+
+#define N_VARIADIC_ARGS(ARGS...)			\
+  {std::tuple_size_v<decltype(std::make_tuple(ARGS))>}
 
 template <typename T,
 	  typename V>
@@ -30,6 +33,38 @@ std::string variantInnerTypeName(const auto& v)
   {
     return typeid(decltype(x)).name();
   },v);
+}
+
+std::string unescapeString(const std::string& in)
+{
+  std::string out;
+  
+  bool esc=false;
+  
+  for(size_t i=1;i<in.length()-1;i++)
+    if(esc)
+      {
+	switch(in[i])
+	  {
+	  case 'b':out+='\b';break;
+	  case 'n':out+='\n';break;
+	  case 'f':out+='\f';break;
+	  case 'r':out+='\r';break;
+	  case 't':out+='\t';break;
+	  default:out+=in[i];
+	  }
+	esc=false;
+      }
+    else
+      if(in[i]=='\\')
+	esc=true;
+      else
+	out+=in[i];
+  
+  if(esc)
+    errorEmitter("String ended while escaping");
+  
+  return out;
 }
 
 template <typename...Ts>
@@ -102,25 +137,40 @@ struct ValueNode;
 template <typename T>
 struct UnOpNode;
 
-struct Uplus
-{
-  template <typename A>
-  static auto eval(const A& a) -> decltype(+a)
-  {
-    return +a;
+#define DEFINE_UN_NODE_OP(NAME,OP1,OP2)			\
+    struct U ## NAME					\
+  {							\
+    template <typename A>				\
+    static auto eval(A&& a) -> decltype(OP1 a OP2)	\
+    {							\
+      return OP1 a OP2;					\
+    }							\
   }
-};
 
-struct Uminus
-{
-  template <typename A>
-  static auto eval(const A& a) -> decltype(-a)
-  {
-    return -a;
-  }
-};
+#define DEFINE_UN_NODE(NAME,OP1,OP2)			\
+  DEFINE_UN_NODE_OP(NAME,OP1,OP2);			\
+  							\
+  using U ## NAME ## Node=				\
+    UnOpNode<U ## NAME>
 
-struct Uref
+DEFINE_UN_NODE(Plus,+,);
+DEFINE_UN_NODE(Minus,-,);
+
+#undef DEFINE_UN_NODE
+
+template <typename T>
+struct PostfixVariateNode;
+
+#define DEFINE_POSTFIX_NODE(NAME,OP1,OP2)			\
+  DEFINE_UN_NODE_OP(Postfix ## NAME,OP1,OP2);			\
+  								\
+  using UPostfix ## NAME ## Node=				\
+    PostfixVariateNode<UPostfix ## NAME>
+
+DEFINE_POSTFIX_NODE(Increment,,++);
+DEFINE_POSTFIX_NODE(Decrement,,--);
+
+struct URef
 {
   template <typename A>
   static A eval(const A& a)
@@ -131,61 +181,43 @@ struct Uref
   }
 };
 
-using UplusNode=
-  UnOpNode<Uplus>;
-
-using UminusNode=
-  UnOpNode<Uminus>;
-
-using UrefNode=
-  UnOpNode<Uref>;
+using URefNode=
+  UnOpNode<URef>;
 
 /////////////////////////////////////////////////////////////////
 
 template <typename T>
 struct BinOpNode;
 
-struct Sum
-{
-  template <typename A,
-	    typename B>
-  static auto eval(const A& a,
-		   const B& b) -> decltype(a+b)
-  {
-    return a+b;
-  }
-};
+#define DEFINE_BIN_NODE(NAME,OP)			\
+  struct NAME						\
+  {							\
+    template <typename A,				\
+	      typename B>				\
+    static auto eval(const A& a,			\
+		     const B& b) -> decltype(a OP b)	\
+    {							\
+      return a OP b;					\
+    }							\
+  };							\
+							\
+  using NAME ## Node=					\
+    BinOpNode<NAME>
 
-struct Sub
-{
-  template <typename A,
-	    typename B>
-  static auto eval(const A& a,
-		   const B& b) -> decltype(a-b)
-  {
-    return a-b;
-  }
-};
+DEFINE_BIN_NODE(Sum,+);
+DEFINE_BIN_NODE(Diff,-);
+DEFINE_BIN_NODE(Prod,*);
+DEFINE_BIN_NODE(Div,/);
+DEFINE_BIN_NODE(Smaller,<);
+DEFINE_BIN_NODE(Greater,>);
+DEFINE_BIN_NODE(SmallerEqual,<=);
+DEFINE_BIN_NODE(GreaterEqual,>=);
+DEFINE_BIN_NODE(Compare,==);
+DEFINE_BIN_NODE(Inequal,!=);
+DEFINE_BIN_NODE(Or,or);
+DEFINE_BIN_NODE(And,and);
 
-struct Prod
-{
-  template <typename A,
-	    typename B>
-  static auto eval(const A& a,
-		   const B& b) -> decltype(a*b)
-  {
-    return a*b;
-  }
-};
-
-using SumNode=
-  BinOpNode<Sum>;
-
-using SubNode=
-  BinOpNode<Sub>;
-
-using ProdNode=
-  BinOpNode<Prod>;
+#undef DEFINE_BIN_NODE
 
 struct AssignNode;
 
@@ -204,12 +236,23 @@ using ASTNode=
 	       ForNode,
 	       IfNode,
 	       IdNode,
-	       UplusNode,
-	       UminusNode,
-	       UrefNode,
+	       UPlusNode,
+	       UMinusNode,
+	       UPostfixIncrementNode,
+	       UPostfixDecrementNode,
+	       URefNode,
 	       SumNode,
-	       SubNode,
+	       DiffNode,
 	       ProdNode,
+	       DivNode,
+	       SmallerNode,
+	       GreaterNode,
+	       SmallerEqualNode,
+	       GreaterEqualNode,
+	       CompareNode,
+	       OrNode,
+	       AndNode,
+	       InequalNode,
 	       FuncDefNode,
 	       FuncCallNode,
 	       ValueNode,
@@ -225,6 +268,15 @@ struct ASTNodesNode
 
 struct Environment;
 
+struct Function;
+
+struct HostFunction;
+
+using Value=
+  std::variant<std::monostate,std::string,int,double,Function,HostFunction>;
+
+struct Evaluator;
+
 struct Function
 {
   std::shared_ptr<FunctionArgs> args;
@@ -234,8 +286,10 @@ struct Function
   Environment* env;
 };
 
-using Value=
-  std::variant<std::monostate,std::string,int,double,Function>;
+struct HostFunction :
+  std::function<Value(std::vector<Value>&)>
+{
+};
 
 struct AssignNode
 {
@@ -278,6 +332,12 @@ struct IdNode
 struct ValueNode
 {
   Value value;
+};
+
+template <typename T>
+struct PostfixVariateNode
+{
+  std::shared_ptr<ASTNode> op;
 };
 
 template <typename T>
@@ -360,13 +420,17 @@ struct Evaluator
     if(env.find(name))
       errorEmitter("Redefining a function which has a name already defined");
     
-    env[name]=Function{.args=funcDefNode.args,.body=funcDefNode.body,.env=&env};
+    env[name]=
+      Function{.args=funcDefNode.args,
+      .body=funcDefNode.body,
+      .env=&env};
     
     return std::monostate{};
   }
   
   Value operator()(const FuncCallNode& funcCallNode)
   {
+    /// Name of the function to call
     const std::string& fName=
       funcCallNode.name;
     
@@ -416,7 +480,16 @@ struct Evaluator
 	  return std::visit(subev,*f->body);
 	}
       else
-	errorEmitter("Variable ",fName," is of type ",variantInnerTypeName(*nf)," not a ",typeid(Function).name());
+	if(HostFunction* hf=std::get_if<HostFunction>(&*nf))
+	  {
+	    std::vector<Value> evArgs;
+	    for(const std::shared_ptr<ASTNode>& ap : funcCallNode.args)
+	      evArgs.emplace_back(std::visit(*this,*ap));
+	    
+	    return (*hf)(evArgs);
+	  }
+	else
+	  errorEmitter("Variable ",fName," is of type ",variantInnerTypeName(*nf)," not a ",typeid(Function).name());
     else
       errorEmitter("unable to find function: \"",fName,"\"");
     
@@ -453,7 +526,8 @@ struct Evaluator
 	},std::visit(subev,*ifNode.subNodes[0])))
       std::visit(subev,*ifNode.subNodes[1]);
     else
-      std::visit(subev,*ifNode.subNodes[2]);
+      if(ifNode.subNodes.size()>=2)
+	std::visit(subev,*ifNode.subNodes[2]);
     
     return std::monostate{};
   }
@@ -523,6 +597,32 @@ struct Evaluator
 	  return std::monostate{};
 	}
     },r);
+  }
+
+  template <typename T>
+  Value operator()(const PostfixVariateNode<T>& node)
+  {
+    const std::string& name=
+      unvariant<IdNode>(*node.op).name;
+    
+    std::shared_ptr<Value> v=env.find(name);
+    if(v!=nullptr)
+      return
+	std::visit([](auto& r) -> Value
+	{
+	  if constexpr(requires {T::eval(r);})
+	    return T::eval(r);
+	  else
+	    {
+	      errorEmitter("asking to postfix-variate type ",typeid(r).name()," not supporting postfix");
+	      return std::monostate{};
+	    }
+	},*v);
+    else
+      {
+	errorEmitter("asking to postfix-variate inexisting id ",name);
+	return std::monostate{};
+      }
   }
   
   template <typename T>
@@ -887,10 +987,18 @@ void a()
 
 void c()
 {
+#define BARE_WHITESPACES			\
+  "( |\\n|\\t)+"
   
-  const char cGrammar[]=
+#define CPP_COMMENT				\
+  "//[^\\n]+\\n"
+  
+#define C_COMMENT				\
+  "/\\*([^\\*]|\\*[^/])+\\*/"
+    
+    const char cGrammar[]=
     "c {"
-    "   %whitespace \"( |\\n|\\t)+\";"
+    "   %whitespace \"" BARE_WHITESPACES "|" CPP_COMMENT "|" C_COMMENT "\";"
     "   %none lowerThanElse;"
     "   %none \"else\";"
     "   %left \",\";"
@@ -899,8 +1007,8 @@ void c()
     "   %right \"\\-=\";"
     "   %right \"\\*=\";"
     "   %right \"/=\";"
-    "   %left \"\\|\\|\";"
-    "   %left \"&&\";"
+    "   %left \"\\|\\||or\";"
+    "   %left \"&&|and\";"
     "   %left \"==\";"
     "   %left \"!=\";"
     "   %left \"<\";"
@@ -932,7 +1040,7 @@ void c()
     "                        | assign_expression [return]"
     "                        | unary_reference [return]"
     "                        ;"
-    "   forStatement: \"for\" \"\\(\" forInit \";\" forCheck \";\" forIncr \"\\)\" statement [forStatement]"
+    "   forStatement: \"for\" \"\\(\" forInit \";\" forCheck \";\" forIncr \"\\)\" statement [forStatement(2,4,6,8)]"
     "               ;"
     "   forInit: expression [return]"
     "          |"
@@ -943,8 +1051,8 @@ void c()
     "   forIncr: expression [return]"
     "          |"
     "          ;"
-    "   ifStatement: \"if\" \"\\(\" expression \"\\)\" statement %precedence lowerThanElse [ifStatement]"
-    "              | \"if\" \"\\(\" expression \"\\)\" statement \"else\" statement [ifElseStatement]"
+    "   ifStatement: \"if\" \"\\(\" expression \"\\)\" statement %precedence lowerThanElse [ifStatement(2,4)]"
+    "              | \"if\" \"\\(\" expression \"\\)\" statement \"else\" statement [ifElseStatement(2,4,6)]"
     "              ;"
     "    compound_statement : \"{\" statements \"}\" [return(1)]"
     "                       ;"
@@ -963,29 +1071,29 @@ void c()
     "    assign_expression: identifier \"=\" expression [unaryAssign(0,2)]"
     "                     ;"
     "    logical_or_expression : logical_and_expression [return]"
-    "                          | logical_or_expression \"\\|\\|\" logical_and_expression [binayOr]"
+    "                          | logical_or_expression \"\\|\\||or\" logical_and_expression [binaryOr(0,2)]"
     "                          ;"
     "    logical_and_expression : equality_expression [return]"
-    "                           | logical_and_expression \"&&\" equality_expression [binaryAnd]"
+    "                           | logical_and_expression \"&&|and\" equality_expression [binaryAnd(0,2)]"
     "                           ;"
     "    equality_expression : relational_expression [return]"
-    "                        | equality_expression \"==\" relational_expression [binaryComparison]"
-    "                        | equality_expression \"!=\" relational_expression [binaryInequality]"
+    "                        | equality_expression \"==\" relational_expression [binaryCompare(0,2)]"
+    "                        | equality_expression \"!=\" relational_expression [binaryInequal(0,2)]"
     "                        ;"
     "    relational_expression : additive_expression %precedence \"<=\" [return]"
-    "                          | relational_expression \"<\" additive_expression [binarySmaller]"
-    "                          | relational_expression \">\" additive_expression [binaryGreater]"
-    "                          | relational_expression \"<=\" additive_expression [binarySmallerEqual]"
-    "                          | relational_expression \">=\" additive_expression [binaryGreaterEqual]"
+    "                          | relational_expression \"<\" additive_expression [binarySmaller(0,2)]"
+    "                          | relational_expression \">\" additive_expression [binaryGreater(0,2)]"
+    "                          | relational_expression \"<=\" additive_expression [binarySmallerEqual(0,2)]"
+    "                          | relational_expression \">=\" additive_expression [binaryGreaterEqual(0,2)]"
     "                          ;"
     "    additive_expression : multiplicative_expression [return]"
-    "                        | additive_expression \"\\+\" multiplicative_expression [binarySum]"
+    "                        | additive_expression \"\\+\" multiplicative_expression [binarySum(0,2)]"
     "                        | additive_expression \"\\-\" multiplicative_expression [binaryDiff(0,2)]"
     "                        ;"
     "    multiplicative_expression : unary_expression [return]"
     "                              | multiplicative_expression \"\\*\" unary_expression [binaryProd(0,2)]"
-    "                              | multiplicative_expression \"/\" unary_expression [binaryDiv]"
-    "                              | multiplicative_expression \"%\" unary_expression [binaryModule]"
+    "                              | multiplicative_expression \"/\" unary_expression [binaryDiv(0,2)]"
+    "                              | multiplicative_expression \"%\" unary_expression [binaryModule(0,2)]"
     "                              ;"
     "    unary_expression : postfix_expression [return]"
     "                     | \"\\+\" unary_expression [unaryPlus(1)]"
@@ -996,11 +1104,11 @@ void c()
     "    unary_reference : \"&\" unary_expression [unaryReference(1)]"
     "                    ;"
     "    postfix_expression : primary_expression [return]"
-    "                       | postfix_expression \"\\+\\+\" [postfixIncrement]"
-    "                       | postfix_expression \"\\-\\-\" [postfixDecrement]"
+    "                       | postfix_expression \"\\+\\+\" [unaryPostfixIncrement(0)]"
+    "                       | postfix_expression \"\\-\\-\" [unaryPostfixDecrement(0)]"
     "                       ;"
-    "    function_call_arguments : assign_expression [firstFuncCallArg]"
-    "                            | function_call_arguments \",\" assign_expression [appendFuncCallArg(0,2)]"
+    "    function_call_arguments : expression [firstFuncCallArg]"
+    "                            | function_call_arguments \",\" expression [appendFuncCallArg(0,2)]"
     "                            ;"
     "    primary_expression : identifier [return]"
     "                       | integer_constant [return]"
@@ -1009,7 +1117,8 @@ void c()
     "                       | \"\\(\" expression \"\\)\" [return(1)]"
     "                       | function_call [return(0)]"
     "                       ;"
-    "    function_call : identifier \"\\(\" function_call_arguments \"\\)\" %precedence FUNCTION_CALL [funcCall(0,2)] "
+    "    function_call : identifier \"\\(\" \"\\)\" %precedence FUNCTION_CALL [emptyFuncCall(0)] "
+    "                  | identifier \"\\(\" function_call_arguments \"\\)\" %precedence FUNCTION_CALL [funcCall(0,2)] "
     "                  ;"
     "    identifier : \"[a-zA-Z_][a-zA-Z0-9_]*\" [convToId]"
     "               ;"
@@ -1017,24 +1126,24 @@ void c()
     "                     ;"
     "    floating_constant : \"[0-9]+(\\.[0-9]+)?((e|E)(\\+|\\-)?[0-9]+)?\" [convToFloat]"
     "                      ;"
-    "    string : \"\\\"[^\\\"]*\\\"\" [return]"
+    "    string : \"\\\"[^\\\"]*\\\"\" [convToStr]"
     "           ;"
     "}";
   
   const auto c=createGrammar(cGrammar);
   
-  for(size_t iState=0;iState<c.states.size();iState++)
-    {
-      const GrammarState& state=c.states[iState];
+  // for(size_t iState=0;iState<c.states.size();iState++)
+  //   {
+  //     const GrammarState& state=c.states[iState];
       
-      diagnostic("--\n");
+  //     diagnostic("--\n");
       
-      diagnostic("State ",iState,":\n",c.describe(state));
-      diagnostic("has ",c.transitionsOfStates[iState].size()," transitions:\n");
+  //     diagnostic("State ",iState,":\n",c.describe(state));
+  //     diagnostic("has ",c.transitionsOfStates[iState].size()," transitions:\n");
       
-      for(const GrammarTransition& t : c.transitionsOfStates[iState])
-	diagnostic(c.describe(t));
-    }
+  //     for(const GrammarTransition& t : c.transitionsOfStates[iState])
+  // 	diagnostic(c.describe(t));
+  //   }
   
   // std::vector<std::vector<size_t>> arriveToStateFrom(c.states.size());
   // for(size_t iState=0;iState<c.states.size();iState++)
@@ -1075,41 +1184,19 @@ void c()
   
   
   
-  diagnostic("Grammar info, nstates: ",c.states.size(),"\n");
-  diagnostic("Lexer info, nDstates: ",c.regexMatcher.dStates.size(),"\n");
+  // diagnostic("Grammar info, nstates: ",c.states.size(),"\n");
+  // diagnostic("Lexer info, nDstates: ",c.regexMatcher.dStates.size(),"\n");
   
   
   
   // createParsableExample(c);
   // return ;
   
-  std::vector<char> ext;
-  if(const char* path="/home/francesco/trastulli/parse-pact/example";
-     std::filesystem::exists(path)){
-    
-    const size_t exs=std::filesystem::file_size(path);
-    ext.resize(exs+1);
-    if(FILE* file=fopen(path,"r"))
-      {
-	if(const size_t n=fread(&ext[0],1,exs,file);n!=exs)
-	  errorEmitter("expected ",exs," obtained ",n);
-	ext[exs]='\0';
-	fclose(file);
-      }
-    else
-      errorEmitter("unable to read ",path);
-  }
-  else
-    errorEmitter("file ",path," does not exists");
-  
-  auto pt=
-    createParseTree(c,&ext[0]);
-  
   ParseTreeExecutor<ASTNode> ptExecutor;
   
 #define ENSURE_N_SYMBOLS(N)			\
   if(subNodes.size()!=N)			\
-    errorEmitter("expecting " #N " symbols")
+    errorEmitter("expecting " #N " symbols, obtained ",subNodes.size())
   
 #define PROVIDE_ACTION_WITH_N_SYMBOLS(NAME,				\
 				      N,				\
@@ -1132,22 +1219,48 @@ void c()
 				return subNodes[0]);
   
   PROVIDE_ACTION_WITH_N_SYMBOLS("return",1,return subNodes[0]);
-  PROVIDE_ACTION_WITH_N_SYMBOLS("convToInt",1,
-				ValueNode& v=fetch<ValueNode>(subNodes,0);
-				std::string* s=std::get_if<std::string>(&v.value);
-				if(s==nullptr)
-				  errorEmitter("expecting std::string, obtained other type");
-				return std::make_shared<ASTNode>(ValueNode{atoi(s->c_str())}));
-  PROVIDE_ACTION_WITH_N_SYMBOLS("unaryMinus",1,return std::make_shared<ASTNode>(UminusNode{.op=subNodes[0]}));
-  PROVIDE_ACTION_WITH_N_SYMBOLS("unaryPlus",1,return std::make_shared<ASTNode>(UplusNode{.op=subNodes[0]}));
-  PROVIDE_ACTION_WITH_N_SYMBOLS("unaryReference",1,return std::make_shared<ASTNode>(UrefNode{.op=subNodes[0]}));
-  PROVIDE_ACTION_WITH_N_SYMBOLS("binaryProd",2,return std::make_shared<ASTNode>(ProdNode{.op1=subNodes[0],.op2=subNodes[1]}));
-  PROVIDE_ACTION_WITH_N_SYMBOLS("binaryDiff",2,return std::make_shared<ASTNode>(SubNode{.op1=subNodes[0],.op2=subNodes[1]}));
+  PROVIDE_ACTION_WITH_N_SYMBOLS("convToInt",1,return std::make_shared<ASTNode>(ValueNode{atoi(unvariant<std::string>(fetch<ValueNode>(subNodes,0).value).c_str())}));
+  PROVIDE_ACTION_WITH_N_SYMBOLS("convToFloat",1,return std::make_shared<ASTNode>(ValueNode{strtod(unvariant<std::string>(fetch<ValueNode>(subNodes,0).value).c_str(),nullptr)}));
+  
+#define PROVIDE_UN_ACTION(NAME)					\
+  PROVIDE_ACTION_WITH_N_SYMBOLS("unary" #NAME,1,return std::make_shared<ASTNode>(U ## NAME ## Node{.op=subNodes[0]}))
+  
+  PROVIDE_UN_ACTION(Plus);
+  PROVIDE_UN_ACTION(Minus);
+  PROVIDE_UN_ACTION(PostfixIncrement);
+  PROVIDE_UN_ACTION(PostfixDecrement);
+  
+#undef PROVIDE_UN_ACTION
+  PROVIDE_ACTION_WITH_N_SYMBOLS("unaryReference",1,return std::make_shared<ASTNode>(URefNode{.op=subNodes[0]}));
+
+#define PROVIDE_BIN_ACTION(NAME)					\
+  PROVIDE_ACTION_WITH_N_SYMBOLS("binary" #NAME,2,return std::make_shared<ASTNode>(NAME ## Node{.op1=subNodes[0],.op2=subNodes[1]}))
+  
+  PROVIDE_BIN_ACTION(Sum);
+  PROVIDE_BIN_ACTION(Diff);
+  PROVIDE_BIN_ACTION(Prod);
+  PROVIDE_BIN_ACTION(Div);
+  PROVIDE_BIN_ACTION(Smaller);
+  PROVIDE_BIN_ACTION(Greater);
+  PROVIDE_BIN_ACTION(SmallerEqual);
+  PROVIDE_BIN_ACTION(GreaterEqual);
+  PROVIDE_BIN_ACTION(Compare);
+  PROVIDE_BIN_ACTION(Inequal);
+  PROVIDE_BIN_ACTION(Or);
+  PROVIDE_BIN_ACTION(And);
+
+#undef PROVIDE_BIN_ACTION
+  
   PROVIDE_ACTION_WITH_N_SYMBOLS("unaryAssign",2,return std::make_shared<ASTNode>(AssignNode{.lhs=subNodes[0],.rhs=subNodes[1]}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("firstFuncCallArg",1,return std::make_shared<ASTNode>(ASTNodesNode{.subNodes{subNodes[0]}}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("appendFuncCallArg",2,fetch<ASTNodesNode>(subNodes,0).subNodes.push_back(subNodes[1]);return subNodes[0]);
+  PROVIDE_ACTION_WITH_N_SYMBOLS("emptyFuncCall",1,return std::make_shared<ASTNode>(FuncCallNode{.name=fetch<IdNode>(subNodes,0).name,.args{}}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("funcCall",2,return std::make_shared<ASTNode>(FuncCallNode{.name=fetch<IdNode>(subNodes,0).name,.args=fetch<ASTNodesNode>(subNodes,1).subNodes}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("convToId",1,return std::make_shared<ASTNode>(IdNode{.name=unvariant<std::string>(fetch<ValueNode>(subNodes,0).value)}));
+  PROVIDE_ACTION_WITH_N_SYMBOLS("convToStr",1,return std::make_shared<ASTNode>(ValueNode{unescapeString(unvariant<std::string>(fetch<ValueNode>(subNodes,0).value))}));
+  PROVIDE_ACTION_WITH_N_SYMBOLS("ifStatement",2,return std::make_shared<ASTNode>(IfNode{.subNodes{subNodes}}));
+  PROVIDE_ACTION_WITH_N_SYMBOLS("ifElseStatement",3,return std::make_shared<ASTNode>(IfNode{.subNodes{subNodes}}));
+  PROVIDE_ACTION_WITH_N_SYMBOLS("forStatement",4,return std::make_shared<ASTNode>(ForNode{.subNodes{subNodes}}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("funcDefArg",1,return std::make_shared<ASTNode>(IdNode{.name=unvariant<std::string>(fetch<ValueNode>(subNodes,0).value)}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("funcDef",3,
 				const std::string name=fetch<IdNode>(subNodes,0).name;
@@ -1168,7 +1281,7 @@ void c()
 					{
 					  args->try_emplace(unvariant<IdNode>(*ass.lhs).name,false,ass.rhs);
 					},
-					[&args](const UrefNode& ref)
+					[&args](const URefNode& ref)
 					{
 					  args->try_emplace(unvariant<IdNode>(*ref.op).name,true,nullptr);
 					}},*a);
@@ -1176,15 +1289,129 @@ void c()
 				return std::make_shared<ASTNode>(FuncDefNode{name,args,body});
 				);
   
-  diagnostic("Executing the parse tree to generate the AST\n");
+  std::cout<<"Executing the parse tree to generate the AST\n";
   
-  std::shared_ptr<ASTNode> r=ptExecutor.execParseTree(pt);
+  /////////////////////////////////////////////////////////////////
   
-  diagnostic("Evaluating the AST\n");
+  std::vector<char> ext;
+  if(const char* path="/home/francesco/trastulli/parse-pact/example";
+     std::filesystem::exists(path))
+    {
+      const size_t exs=
+	std::filesystem::file_size(path);
+      ext.resize(exs+1);
+      
+      if(FILE* file=fopen(path,"r"))
+	{
+	  if(const size_t n=fread(&ext[0],1,exs,file);n!=exs)
+	    errorEmitter("expected ",exs," obtained ",n);
+	  ext[exs]='\0';
+	  fclose(file);
+	}
+      else
+	errorEmitter("unable to read ",path);
+    }
+  else
+    errorEmitter("file ",path," does not exists");
+  
+  /////////////////////////////////////////////////////////////////
+  
+  std::cout<<"Creating the parse tree\n";
+  
+  auto pt=
+    createParseTree(c,&ext[0]);
+  
+  /////////////////////////////////////////////////////////////////
+  
+  std::cout<<"Creating the AST\n";
+  
+  std::shared_ptr<ASTNode> r=
+    ptExecutor.execParseTree(pt);
+  
+  /////////////////////////////////////////////////////////////////
+  
+  std::cout<<"Evaluating the AST\n";
   
   Evaluator ev;
-  diagnostic(" base node: ",variantInnerTypeName(*r),"\n");
+  
+  ev.env["M_PI"]=M_PI;
+  
+  ev.env["print"]=
+    HostFunction{
+    [](std::vector<Value>& args)->Value
+    {
+      for(Value& arg : args)
+	std::visit([](const auto& v)
+      {
+	if constexpr(Streamable<decltype(v)>)
+	  std::cout<<v;
+	else
+	  diagnostic("unprintable type: ",typeid(decltype(v)).name());
+      },arg);
+      
+      return {};
+    }};
+
+#define REGISTER_ARGLESS_HOST_FUNCTION(NAME)	\
+  ev.env[#NAME]=				\
+    HostFunction{				\
+    [](std::vector<Value>& args)->Value		\
+    {						\
+      return NAME();				\
+    }}
+  
+#define REGISTER_HOST_FUNCTION(NAME,ARGS...)				\
+  ev.env[#NAME]=							\
+    HostFunction{							\
+    [](std::vector<Value>& args)->Value					\
+    {									\
+      constexpr size_t N=						\
+	N_VARIADIC_ARGS(ARGS);						\
+    									\
+    const size_t n=							\
+      args.size();							\
+    									\
+    if(N!=n)								\
+      errorEmitter("trying to call function ",#NAME,			\
+		   " which expects ",N," args with ",n);		\
+									\
+      return std::visit([](auto&&...args) ->Value			\
+    {									\
+      if constexpr(requires {NAME(std::forward<decltype(args)>(args)...);}) \
+	if constexpr(std::is_same_v<void,decltype(NAME(std::forward<decltype(args)>(args)...))>) \
+	  NAME(std::forward<decltype(args)>(args)...);			\
+	else								\
+	  return NAME(std::forward<decltype(args)>(args)...);		\
+      else								\
+	errorEmitter("Trying to call ",#NAME,				\
+		     " function with impossible args ",typeid(args).name()...); \
+      									\
+      return std::monostate{};						\
+    }									\
+	,ARGS);								\
+    }}
+  
+  REGISTER_ARGLESS_HOST_FUNCTION(rand);
+  
+  REGISTER_HOST_FUNCTION(srand,args[0]);
+  REGISTER_HOST_FUNCTION(sqrt,args[0]);
+  REGISTER_HOST_FUNCTION(exp,args[0]);
+  REGISTER_HOST_FUNCTION(sin,args[0]);
+  REGISTER_HOST_FUNCTION(cos,args[0]);
+  REGISTER_HOST_FUNCTION(tan,args[0]);
+  REGISTER_HOST_FUNCTION(pow,args[0],args[1]);
+  
+  {
+    using namespace std;
+    REGISTER_HOST_FUNCTION(to_string,args[0]);
+  }
+  
   std::visit(ev,*r);
+  
+  /////////////////////////////////////////////////////////////////
+  
+  std::cout<<"Environment: \n";
+  
   ev.env.print();
 }
 
@@ -1206,237 +1433,225 @@ int main()
   
   // it will be convenient to keep track of this https://cs.wmich.edu/~gupta/teaching/cs4850/sumII06/The%20syntax%20of%20C%20in%20Backus-Naur%20form.htm
   
-  [[maybe_unused]]
-  constexpr const char nissaGrammar[]=
-	      "nissa {"
-	      "   %whitespace \" +\";"
-	      "   %right \"=\";"
-	      "   %left \"\\+\";"
-	      "   %left \"\\-\";"
-	      "   %left \"\\*\";"
-	      "   %none lowerThanElse;"
-	      "   %none \"else\";"
-	      "   statements: statements statement [appendStatement]"
-	      "             | [createStatements]"
-	      "             ;"
-	      "   statement: exprStatement [return]"
-	      "            | forStatement [return]"
-	      "            | ifStatement [return]"
-	      "            | \"{\" statements \"}\" [return1]"
-	      "            ;"
-	      "   exprStatement: expr \";\" [exprStatement]"
-	      "                | \";\""
-	      "                ;"
-	      "   forStatement: \"for\" \"\\(\" forInit \";\" forCheck \";\" forIncr \"\\)\" statement [forStatement]"
-	      "               ;"
-	      "   forInit: expr [return]"
-	      "          |"
-	      "          ;"
-	      "   forCheck: expr [return]"
-	      "          |"
-	      "          ;"
-	      "   forIncr: expr [return]"
-	      "          |"
-	      "          ;"
-	      "   ifStatement: \"if\" \"\\(\" expr \"\\)\" statement %precedence lowerThanElse [ifStatement]"
-	      "              | \"if\" \"\\(\" expr \"\\)\" statement \"else\" statement [ifElseStatement]"
-	      "              ;"
-	      "   lhs: id [return]"
-	      "      ;"
-	      "   expr: assignExpr [return]"
-	      "       | expr \"\\*\" expr [product]"
-	      "       | expr \"\\+\" expr [sum]"
-	      "       | expr \"\\-\" expr [sub]"
-	      "       | \"\\+\" expr [uplus]"
-	      "       | \"\\-\" expr [uminus]"
-	      "       | \"\\(\" expr \"\\)\" [bracket]"
-	      "       | id [rhsSub]"
-	      "       | str [return]"
-	      "       | int [return]"
-	      "       ;"
-	      "   assignExpr: lhs \"=\" expr [assign] "
-	      "             ;"
-	      "   id: \"[a-zA-Z_][a-zA-Z0-9_]*\" [return]"
-	      "     ;"
-	      "   str: \"\\\"[^\\\"]*\\\"\" [storeString]"
-	      "      ;"
-	      "   int: \"[0-9]+\" [convToInt]"
-	      "      ;"
-	      "}";
+  // [[maybe_unused]]
+  // constexpr const char nissaGrammar[]=
+  // 	      "nissa {"
+  // 	      "   %whitespace \" +\";"
+  // 	      "   %right \"=\";"
+  // 	      "   %left \"\\+\";"
+  // 	      "   %left \"\\-\";"
+  // 	      "   %left \"\\*\";"
+  // 	      "   %none lowerThanElse;"
+  // 	      "   %none \"else\";"
+  // 	      "   statements: statements statement [appendStatement]"
+  // 	      "             | [createStatements]"
+  // 	      "             ;"
+  // 	      "   statement: exprStatement [return]"
+  // 	      "            | forStatement [return]"
+  // 	      "            | ifStatement [return]"
+  // 	      "            | \"{\" statements \"}\" [return1]"
+  // 	      "            ;"
+  // 	      "   exprStatement: expr \";\" [exprStatement]"
+  // 	      "                | \";\""
+  // 	      "                ;"
+  // 	      "   forStatement: \"for\" \"\\(\" forInit \";\" forCheck \";\" forIncr \"\\)\" statement [forStatement]"
+  // 	      "               ;"
+  // 	      "   forInit: expr [return]"
+  // 	      "          |"
+  // 	      "          ;"
+  // 	      "   forCheck: expr [return]"
+  // 	      "          |"
+  // 	      "          ;"
+  // 	      "   forIncr: expr [return]"
+  // 	      "          |"
+  // 	      "          ;"
+  // 	      "   ifStatement: \"if\" \"\\(\" expr \"\\)\" statement %precedence lowerThanElse [ifStatement]"
+  // 	      "              | \"if\" \"\\(\" expr \"\\)\" statement \"else\" statement [ifElseStatement]"
+  // 	      "              ;"
+  // 	      "   lhs: id [return]"
+  // 	      "      ;"
+  // 	      "   expr: assignExpr [return]"
+  // 	      "       | expr \"\\*\" expr [product]"
+  // 	      "       | expr \"\\+\" expr [sum]"
+  // 	      "       | expr \"\\-\" expr [sub]"
+  // 	      "       | \"\\+\" expr [uplus]"
+  // 	      "       | \"\\-\" expr [uminus]"
+  // 	      "       | \"\\(\" expr \"\\)\" [bracket]"
+  // 	      "       | id [rhsSub]"
+  // 	      "       | str [return]"
+  // 	      "       | int [return]"
+  // 	      "       ;"
+  // 	      "   assignExpr: lhs \"=\" expr [assign] "
+  // 	      "             ;"
+  // 	      "   id: \"[a-zA-Z_][a-zA-Z0-9_]*\" [return]"
+  // 	      "     ;"
+  // 	      "   str: \"\\\"[^\\\"]*\\\"\" [storeString]"
+  // 	      "      ;"
+  // 	      "   int: \"[0-9]+\" [convToInt]"
+  // 	      "      ;"
+  // 	      "}";
   
-  const auto nissa=createGrammar(nissaGrammar);
+  // const auto nissa=createGrammar(nissaGrammar);
   
-  //constexpr auto nissa=createGrammar<nissaGrammar>();
+  // //constexpr auto nissa=createGrammar<nissaGrammar>();
   
-  auto pt=
-    createParseTree(nissa,
-		    "A=-1*+3; B=-5*(2-A); if(0)C=B*A; else T=11;"
-		    "D=\"ciao\";"
-		    "for(i=0;i-1;i=i+1) for(j=0;j-2;j=j+1){D=D+\" \"+D;}");
+  // auto pt=
+  //   createParseTree(nissa,
+  // 		    "A=-1*+3; B=-5*(2-A); if(0)C=B*A; else T=11;"
+  // 		    "D=\"ciao\";"
+  // 		    "for(i=0;i-1;i=i+1) for(j=0;j-2;j=j+1){D=D+\" \"+D;}");
   
-  std::string_view r("return");
-  pt.back().txtData=std::make_pair(&*r.begin(),&*r.end());
+  // std::string_view r("return");
+  // pt.back().txtData=std::make_pair(&*r.begin(),&*r.end());
   
-  diagnostic("====================================\n");
+  // diagnostic("====================================\n");
   
-  std::vector<std::shared_ptr<ASTNode>> stack;
-  std::map<std::string,std::function<std::shared_ptr<ASTNode>(std::vector<std::shared_ptr<ASTNode>>&)>> actions;
+  // std::vector<std::shared_ptr<ASTNode>> stack;
+  // std::map<std::string,std::function<std::shared_ptr<ASTNode>(std::vector<std::shared_ptr<ASTNode>>&)>> actions;
   
-  actions["createStatements"]=
-    [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
-    {
-      if(subNodes.size()!=0)
-	errorEmitter("expecting 0 symbols");
+  // actions["createStatements"]=
+  //   [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
+  //   {
+  //     if(subNodes.size()!=0)
+  // 	errorEmitter("expecting 0 symbols");
       
-      return std::make_shared<ASTNode>(ASTNodesNode{});
-    };
+  //     return std::make_shared<ASTNode>(ASTNodesNode{});
+  //   };
   
-  actions["exprStatement"]=
-    [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
-    {
-      if(subNodes.size()!=2)
-	errorEmitter("expecting exactly 2 symbols");
+  // actions["exprStatement"]=
+  //   [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
+  //   {
+  //     if(subNodes.size()!=2)
+  // 	errorEmitter("expecting exactly 2 symbols");
       
-      return std::move(subNodes[0]);
-    };
+  //     return std::move(subNodes[0]);
+  //   };
   
-  actions["forStatement"]=
-    [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
-    {
-      if(subNodes.size()!=9)
-	errorEmitter("expecting 9 symbols, obtained ",subNodes.size());
-      
-      std::shared_ptr<ASTNode> res=std::make_shared<ASTNode>(ForNode());
-      for(const int& i : {2,4,6,8})
-	std::get_if<ForNode>(&*res)->subNodes.push_back(subNodes[i]);
-      
-      return res;
-    };
   
-  actions["ifStatement"]=
-    [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
-    {
-      if(subNodes.size()!=5)
-	errorEmitter("expecting 5 symbols, obtained ",subNodes.size());
+  // actions["ifStatement"]=
+  //   [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
+  //   {
+  //     if(subNodes.size()!=5)
+  // 	errorEmitter("expecting 5 symbols, obtained ",subNodes.size());
       
-      std::shared_ptr<ASTNode> res=std::make_shared<ASTNode>(IfNode());
-      for(const int& i : {2,4})
-	std::get_if<IfNode>(&*res)->subNodes.emplace_back(std::move(subNodes[i]));
+  //     std::shared_ptr<ASTNode> res=std::make_shared<ASTNode>(IfNode());
+  //     for(const int& i : {2,4})
+  // 	std::get_if<IfNode>(&*res)->subNodes.emplace_back(std::move(subNodes[i]));
       
-      std::get_if<IfNode>(&*res)->subNodes.emplace_back(std::make_shared<ASTNode>(ASTNodesNode()));
+  //     std::get_if<IfNode>(&*res)->subNodes.emplace_back(std::make_shared<ASTNode>(ASTNodesNode()));
       
-      return res;
-    };
+  //     return res;
+  //   };
   
-  actions["ifElseStatement"]=
-    [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
-    {
-      if(subNodes.size()!=7)
-	errorEmitter("expecting 7 symbols, obtained ",subNodes.size());
+  // actions["ifElseStatement"]=
+  //   [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
+  //   {
+  //     if(subNodes.size()!=7)
+  // 	errorEmitter("expecting 7 symbols, obtained ",subNodes.size());
       
-      std::shared_ptr<ASTNode> res=std::make_shared<ASTNode>(IfNode());
-      for(const int& i : {2,4,6})
-	std::get_if<IfNode>(&*res)->subNodes.emplace_back(std::move(subNodes[i]));
+  //     std::shared_ptr<ASTNode> res=std::make_shared<ASTNode>(IfNode());
+  //     for(const int& i : {2,4,6})
+  // 	std::get_if<IfNode>(&*res)->subNodes.emplace_back(std::move(subNodes[i]));
       
-      return res;
-    };
+  //     return res;
+  //   };
   
-  actions["appendStatement"]=
-    [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
-    {
-      if(subNodes.size()!=2)
-	errorEmitter("expecting exactly 2 symbol");
+  // actions["appendStatement"]=
+  //   [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
+  //   {
+  //     if(subNodes.size()!=2)
+  // 	errorEmitter("expecting exactly 2 symbol");
       
-      std::shared_ptr<ASTNode> res=std::move(subNodes[0]);
+  //     std::shared_ptr<ASTNode> res=std::move(subNodes[0]);
       
-      ASTNodesNode* l=std::get_if<ASTNodesNode>(&*(res));
+  //     ASTNodesNode* l=std::get_if<ASTNodesNode>(&*(res));
       
-      if(l==nullptr)
-	errorEmitter("first argument is not a list of statement");
+  //     if(l==nullptr)
+  // 	errorEmitter("first argument is not a list of statement");
       
-      l->subNodes.emplace_back(std::move(subNodes[1]));
+  //     l->subNodes.emplace_back(std::move(subNodes[1]));
       
-      return res;
-    };
+  //     return res;
+  //   };
   
-  actions["return"]=
-    [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
-    {
-      if(subNodes.size()!=1)
-	errorEmitter("expecting only 1 symbol");
+  // actions["return"]=
+  //   [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
+  //   {
+  //     if(subNodes.size()!=1)
+  // 	errorEmitter("expecting only 1 symbol");
       
-      return std::move(subNodes[0]);
-    };
+  //     return std::move(subNodes[0]);
+  //   };
   
-  actions["return1"]=
-    [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
-    {
-      if(subNodes.size()<2)
-	errorEmitter("expecting only 2 symbols");
+  // actions["return1"]=
+  //   [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
+  //   {
+  //     if(subNodes.size()<2)
+  // 	errorEmitter("expecting only 2 symbols");
       
-      return std::move(subNodes[1]);
-    };
+  //     return std::move(subNodes[1]);
+  //   };
   
-  actions["convToInt"]=
-    [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
-    {
-      ValueNode& v=fetch<ValueNode>(subNodes,0);
+  // actions["convToInt"]=
+  //   [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
+  //   {
+  //     ValueNode& v=fetch<ValueNode>(subNodes,0);
       
-      std::string* s=std::get_if<std::string>(&v.value);
+  //     std::string* s=std::get_if<std::string>(&v.value);
       
-      if(s==nullptr)
-	errorEmitter("expecting std::string, obtained other type");
+  //     if(s==nullptr)
+  // 	errorEmitter("expecting std::string, obtained other type");
       
-      return std::make_shared<ASTNode>(ValueNode{atoi(s->c_str())});
-    };
+  //     return std::make_shared<ASTNode>(ValueNode{atoi(s->c_str())});
+  //   };
   
-  actions["uplus"]=
-    [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
-  {
-    if(subNodes.size()!=2)
-      errorEmitter("expecting 2 symbols");
+  // actions["uplus"]=
+  //   [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
+  // {
+  //   if(subNodes.size()!=2)
+  //     errorEmitter("expecting 2 symbols");
     
-    return std::make_shared<ASTNode>(UplusNode{.op=std::move(subNodes[1])});
-  };
+  //   return std::make_shared<ASTNode>(UplusNode{.op=std::move(subNodes[1])});
+  // };
   
-  actions["uminus"]=
-    [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
-    {
-      if(subNodes.size()!=2)
-	errorEmitter("expecting 2 symbols");
+  // actions["uminus"]=
+  //   [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
+  //   {
+  //     if(subNodes.size()!=2)
+  // 	errorEmitter("expecting 2 symbols");
       
-      return std::make_shared<ASTNode>(UminusNode{.op=std::move(subNodes[1])});
-    };
+  //     return std::make_shared<ASTNode>(UminusNode{.op=std::move(subNodes[1])});
+  //   };
   
-  actions["sum"]=
-    [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
-    {
-      if(subNodes.size()!=3)
-	errorEmitter("expecting precisely 3 symbols");
+  // actions["sum"]=
+  //   [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
+  //   {
+  //     if(subNodes.size()!=3)
+  // 	errorEmitter("expecting precisely 3 symbols");
       
-      return std::make_shared<ASTNode>(SumNode{.op1=std::move(subNodes[0]),
-					       .op2=std::move(subNodes[2])});
-    };
+  //     return std::make_shared<ASTNode>(SumNode{.op1=std::move(subNodes[0]),
+  // 					       .op2=std::move(subNodes[2])});
+  //   };
   
-  actions["sub"]=
-    [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
-    {
-      if(subNodes.size()!=3)
-	errorEmitter("expecting precisely 3 symbols");
+  // actions["sub"]=
+  //   [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
+  //   {
+  //     if(subNodes.size()!=3)
+  // 	errorEmitter("expecting precisely 3 symbols");
       
-      return std::make_shared<ASTNode>(SubNode{.op1=std::move(subNodes[0]),
-					       .op2=std::move(subNodes[2])});
-    };
+  //     return std::make_shared<ASTNode>(SubNode{.op1=std::move(subNodes[0]),
+  // 					       .op2=std::move(subNodes[2])});
+  //   };
   
-  actions["product"]=
-    [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
-    {
-      if(subNodes.size()!=3)
-	errorEmitter("expecting precisely 3 symbols");
+  // actions["product"]=
+  //   [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
+  //   {
+  //     if(subNodes.size()!=3)
+  // 	errorEmitter("expecting precisely 3 symbols");
       
-      return std::make_shared<ASTNode>(ProdNode{.op1=std::move(subNodes[0]),
-					       .op2=std::move(subNodes[2])});
-    };
+  //     return std::make_shared<ASTNode>(ProdNode{.op1=std::move(subNodes[0]),
+  // 					       .op2=std::move(subNodes[2])});
+  //   };
   
   // actions["assign"]=
   //   [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
@@ -1456,92 +1671,92 @@ int main()
   //   return std::make_shared<ASTNode>(AssignNode{.name=*n,.rhs=std::move(subNodes[2])});
   // };
   
-  actions["bracket"]=
-    [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
-  {
-    if(subNodes.size()!=3)
-      errorEmitter("expecting precisely 3 symbols");
+  // actions["bracket"]=
+  //   [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
+  // {
+  //   if(subNodes.size()!=3)
+  //     errorEmitter("expecting precisely 3 symbols");
     
-    return std::move(subNodes[1]);
-  };
+  //   return std::move(subNodes[1]);
+  // };
   
-  actions["storeString"]=
-    [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
-  {
-    if(subNodes.size()!=1)
-      errorEmitter("expecting precisely 1 symbols");
+  // actions["storeString"]=
+  //   [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
+  // {
+  //   if(subNodes.size()!=1)
+  //     errorEmitter("expecting precisely 1 symbols");
       
-    const ValueNode& nameNode=
-      fetch<ValueNode>(subNodes,0);
+  //   const ValueNode& nameNode=
+  //     fetch<ValueNode>(subNodes,0);
     
-    const std::string* name=
-      std::get_if<std::string>(&nameNode.value);
+  //   const std::string* name=
+  //     std::get_if<std::string>(&nameNode.value);
     
-    if(name==nullptr)
-      errorEmitter("symbol containing the string not of string type");
+  //   if(name==nullptr)
+  //     errorEmitter("symbol containing the string not of string type");
     
-    return std::make_shared<ASTNode>(ValueNode{.value=name->substr(1,name->length()-2)});
-  };
+  //   return std::make_shared<ASTNode>(ValueNode{.value=name->substr(1,name->length()-2)});
+  // };
   
-  actions["rhsSub"]=
-    [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
-  {
-      if(subNodes.size()!=1)
-	errorEmitter("expecting precisely 1 symbols");
+  // actions["rhsSub"]=
+  //   [](std::vector<std::shared_ptr<ASTNode>>& subNodes)->std::shared_ptr<ASTNode>
+  // {
+  //     if(subNodes.size()!=1)
+  // 	errorEmitter("expecting precisely 1 symbols");
       
-    const ValueNode& nameNode=
-      fetch<ValueNode>(subNodes,0);
+  //   const ValueNode& nameNode=
+  //     fetch<ValueNode>(subNodes,0);
     
-    const std::string* name=
-      std::get_if<std::string>(&nameNode.value);
+  //   const std::string* name=
+  //     std::get_if<std::string>(&nameNode.value);
     
-    if(name==nullptr)
-      errorEmitter("symbol containing the name of the expanding symbol not of string type");
+  //   if(name==nullptr)
+  //     errorEmitter("symbol containing the name of the expanding symbol not of string type");
     
-    return std::make_shared<ASTNode>(IdNode{.name=*name});
-  };
+  //   return std::make_shared<ASTNode>(IdNode{.name=*name});
+  // };
   
-  for(const auto& [txt,isReduce,n] : pt)
-    if(const std::string_view tmp{txt.first,txt.second};not isReduce)
-      {
-	diagnostic("Push string: ",tmp,"\n");
-	stack.push_back(std::make_shared<ASTNode>(ValueNode(std::string(tmp))));
-      }
-    else
-      {
-	diagnostic("Reducing ",n," symbols from stack of size ",stack.size(),"\n");
+  // for(const auto& [txt,isReduce,n] : pt)
+  //   if(const std::string_view tmp{txt.first,txt.second};not isReduce)
+  //     {
+  // 	diagnostic("Push string: ",tmp,"\n");
+  // 	stack.push_back(std::make_shared<ASTNode>(ValueNode(std::string(tmp))));
+  //     }
+  //   else
+  //     {
+  // 	diagnostic("Reducing ",n," symbols from stack of size ",stack.size(),"\n");
 	
-	if(tmp=="")
-	  {
-	    diagnostic(" (no action)\n");
-	    stack.erase(stack.end()-n,stack.end());
-	    stack.push_back(std::make_shared<ASTNode>(ValueNode(std::monostate{})));
-	  }
-	else
-	  {
-	    diagnostic(" with action: \"",tmp,"\"\n");
+  // 	if(tmp=="")
+  // 	  {
+  // 	    diagnostic(" (no action)\n");
+  // 	    stack.erase(stack.end()-n,stack.end());
+  // 	    stack.push_back(std::make_shared<ASTNode>(ValueNode(std::monostate{})));
+  // 	  }
+  // 	else
+  // 	  {
+  // 	    diagnostic(" with action: \"",tmp,"\"\n");
 	    
-	    if(const auto af=
-	       actions.find((std::string)tmp);
-	       af==actions.end())
-	      errorEmitter("action \"",tmp,"\" not registered");
-	    else
-	      {
-		std::vector<std::shared_ptr<ASTNode>> subNodes{std::make_move_iterator(stack.end()-n),std::make_move_iterator(stack.end())};
-		stack.erase(stack.end()-n,stack.end());
-		diagnostic(" pushing returned symbol to stack\n");
-		stack.push_back(af->second(subNodes));
-	      }
-	  }
+  // 	    if(const auto af=
+  // 	       actions.find((std::string)tmp);
+  // 	       af==actions.end())
+  // 	      errorEmitter("action \"",tmp,"\" not registered");
+  // 	    else
+  // 	      {
+  // 		std::vector<std::shared_ptr<ASTNode>> subNodes{std::make_move_iterator(stack.end()-n),std::make_move_iterator(stack.end())};
+  // 		stack.erase(stack.end()-n,stack.end());
+  // 		diagnostic(" pushing returned symbol to stack\n");
+  // 		stack.push_back(af->second(subNodes));
+  // 	      }
+  // 	  }
 	
-	diagnostic(" new stack size: ",stack.size(),"\n");
-      }
+  // 	diagnostic(" new stack size: ",stack.size(),"\n");
+  //     }
   
-  Evaluator e;
+  // Evaluator e;
   
-  std::visit(e,*stack[0]);
+  // std::visit(e,*stack[0]);
   
-  diagnostic("FINALE\n");
+  // diagnostic("FINALE\n");
   
-  return 0;
+  // return 0;
 }
