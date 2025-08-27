@@ -443,12 +443,16 @@ namespace pp::internal
     exit(1);
   }
   
+  /// This is a bit hacky
+  inline bool verbose=false;
+  
   /// Print to terminal if not evaluated at compile time
   template <typename...Args>
   constexpr void diagnostic(Args&&...args)
   {
     if(not std::is_constant_evaluated())
-      ((std::cout<<args),...);
+      if(verbose)
+	((std::cout<<args),...);
   }
   
   /////////////////////////////////////////////////////////////////
@@ -889,8 +893,9 @@ namespace pp::internal
     constexpr void diagnostic(Args&&...args)
     {
       if(not std::is_constant_evaluated())
-      	for(size_t i=0;i<temptative::nNestedActions;i++)
-	  std::cout<<"\t";
+	if(verbose)
+	  for(size_t i=0;i<temptative::nNestedActions;i++)
+	    std::cout<<"\t";
       pp::internal::diagnostic(std::forward<Args>(args)...);
     }
     
@@ -1788,14 +1793,14 @@ namespace pp::internal
     /// Print the transition
     void printf() const
     {
-      ::printf(" stateFrom: %zu, ",iDStateFrom);
+      diagnostic(" stateFrom: ",iDStateFrom,", ");
       
       if(end==beg+1)
-	::printf("%c",beg);
+	diagnostic(beg);
       else
-	::printf("%s",rangeDescribe(beg,end).c_str());
+	diagnostic(rangeDescribe(beg,end));
       
-      ::printf(", dState: %zu\n",nextDState);
+      diagnostic(", dState: ",nextDState,"\n");
     }
   };
   
@@ -1966,8 +1971,8 @@ namespace pp::internal
       /////////////////////////////////////////////////////////////////
       
       //if(t and (probe==str+len or (len==0 and *probe=='\0')))
-      if(not std::is_constant_evaluated())
-	parseTree.printf();
+      // if(not std::is_constant_evaluated())
+      // 	parseTree.printf();
       
       /// Label of the dState, given by the set of RegexParserNodes
       /// which the dState represents
@@ -2088,16 +2093,16 @@ namespace pp::internal
       if(not std::is_constant_evaluated())
 	for(size_t iDState=0;iDState<dStateLabels.size();iDState++)
 	  {
-	    printf("dState %zu {",iDState);
+	    diagnostic("dState ",iDState," {");
 	    for(size_t i=0;const auto& n : dStateLabels[iDState])
-	      printf("%s%zu",(i++==0)?"":",",n->nodeId);
-	    printf("} has the following transitions which start at %zu: \n",dStates[iDState].transitionsBegin);
+	      diagnostic((i++==0)?"":",",n->nodeId);
+	    diagnostic("} has the following transitions which start at ",dStates[iDState].transitionsBegin,": \n");
 	    
 	    for(size_t iTransition=dStates[iDState].transitionsBegin;iTransition<transitions.size() and transitions[iTransition].iDStateFrom==iDState;iTransition++)
 	      transitions[iTransition].printf();
 	    
 	    if(dStates[iDState].accepting)
-	      printf("  and accepting token %zu\n",dStates[iDState].iToken);
+	      diagnostic("  and accepting token ",dStates[iDState].iToken,"\n");
 	  }
     }
     
@@ -2593,12 +2598,12 @@ namespace pp::internal
       
       if(not std::is_constant_evaluated())
 	{
-	  out+=pref+"\"";
+	  out+=pref+"symbol '";
 	  out+=symbols[iSymbol].name;
-	  out+="\" ";
+	  out+="' ";
 	  if(type==SHIFT)
 	    {
-	      out+="transits to state "+std::to_string(iStateOrProduction)+":\n";
+	      out+="shifts to state "+std::to_string(iStateOrProduction)+":\n";
 	      out+=states[iStateOrProduction].describe(items,productions,symbols,pref+"       ");
 	    }
 	  else
@@ -3662,6 +3667,7 @@ namespace pp::internal
     
     /// Try to solve a shift/reduce conflict
     constexpr void dealWithShiftReduceConflict(GrammarTransition& transition,
+					       const GrammarState& stateFrom,
 					       const GrammarSymbol& symbol,
 					       const size_t& iProduction)
     {
@@ -3670,8 +3676,9 @@ namespace pp::internal
       
       if(productionPrecedence==0 or symbol.precedence==0 or
 	 (symbol.precedence==productionPrecedence and symbol.associativity==GrammarSymbol::Associativity::NONE))
-	errorEmitter((std::string("shift/reduce conflict for '")+describe(production)+"' on symbol '"+std::string(symbol.name)+
-		      "' ought to transition: "+describe(transition)+"\nproduction precedence: "+std::to_string(productionPrecedence)+" symbol precedence: "+std::to_string(symbol.precedence)+" symbol associativity: "+std::to_string((int)symbol.associativity)).c_str(),"\n");
+	errorEmitter((std::string("shift/reduce conflict, at state:\n")+describe(stateFrom,"       ")+
+		      " "+describe(transition)+"\n"
+		      "but could be reduced with production \'"+describe(production)+"' with precedence: "+std::to_string(productionPrecedence)+" symbol precedence: "+std::to_string(symbol.precedence)+" symbol associativity: "+std::to_string((int)symbol.associativity)).c_str(),"\n");
       else
 	if(productionPrecedence>symbol.precedence or (symbol.precedence==productionPrecedence and symbol.associativity==GrammarSymbol::Associativity::RIGHT))
 	  {
@@ -3767,7 +3774,7 @@ namespace pp::internal
 			    diagnostic("!!!!panic! trying to include production\n\t",describe(productions[iProduction]),", the state:\n",describe(state)," has already transition:\n\t",describe(transitions[iTransition]),"for symbol \'",symbol.name,"\'\n");
 			    
 			    if(GrammarTransition& transition=transitions[iTransition];transition.type==GrammarTransition::Type::SHIFT)
-			      dealWithShiftReduceConflict(transition,symbol,iProduction);
+			      dealWithShiftReduceConflict(transition,state,symbol,iProduction);
 			    else
 			      dealWithReduceReduceConflict(transition,symbol,iProduction);
 			  }

@@ -1001,6 +1001,8 @@ void c()
     "   %whitespace \"" BARE_WHITESPACES "|" CPP_COMMENT "|" C_COMMENT "\";"
     "   %none lowerThanElse;"
     "   %none \"else\";"
+    // "   %left \"\\(\";"
+    // "   %left \"\\)\";"
     "   %left \",\";"
     "   %right \"=\";"
     "   %right \"\\+=\";"
@@ -1107,18 +1109,21 @@ void c()
     "                       | postfix_expression \"\\+\\+\" [unaryPostfixIncrement(0)]"
     "                       | postfix_expression \"\\-\\-\" [unaryPostfixDecrement(0)]"
     "                       ;"
-    "    function_call_arguments : expression [firstFuncCallArg]"
-    "                            | function_call_arguments \",\" expression [appendFuncCallArg(0,2)]"
-    "                            ;"
+    "    expressions_list : expression [firstExprOfList]"
+    "                     | expressions_list \",\" expression [appendExprToList(0,2)]"
+    "                     ;"
     "    primary_expression : identifier [return]"
     "                       | integer_constant [return]"
     "                       | floating_constant [return]"
     "                       | string [return]"
     "                       | \"\\(\" expression \"\\)\" [return(1)]"
+    "                       | array [return(0)]"
     "                       | function_call [return(0)]"
     "                       ;"
+    "    array: \"\\[\" expressions_list \"\\]\" [return(2)]"
+    "         ;"
     "    function_call : identifier \"\\(\" \"\\)\" %precedence FUNCTION_CALL [emptyFuncCall(0)] "
-    "                  | identifier \"\\(\" function_call_arguments \"\\)\" %precedence FUNCTION_CALL [funcCall(0,2)] "
+    "                  | identifier \"\\(\" expressions_list \"\\)\" %precedence FUNCTION_CALL [funcCall(0,2)] "
     "                  ;"
     "    identifier : \"[a-zA-Z_][a-zA-Z0-9_]*\" [convToId]"
     "               ;"
@@ -1132,18 +1137,18 @@ void c()
   
   const auto c=createGrammar(cGrammar);
   
-  // for(size_t iState=0;iState<c.states.size();iState++)
-  //   {
-  //     const GrammarState& state=c.states[iState];
+  for(size_t iState=0;iState<c.states.size();iState++)
+    {
+      const GrammarState& state=c.states[iState];
       
-  //     diagnostic("--\n");
+      std::cout<<"--\n";
       
-  //     diagnostic("State ",iState,":\n",c.describe(state));
-  //     diagnostic("has ",c.transitionsOfStates[iState].size()," transitions:\n");
+      std::cout<<"State "<<iState<<":\n"<<c.describe(state);
+      std::cout<<"has "<<c.transitionsOfStates[iState].size()<<" transitions:\n";
       
-  //     for(const GrammarTransition& t : c.transitionsOfStates[iState])
-  // 	diagnostic(c.describe(t));
-  //   }
+      for(const GrammarTransition& t : c.transitionsOfStates[iState])
+	std::cout<<c.describe(t);
+    }
   
   // std::vector<std::vector<size_t>> arriveToStateFrom(c.states.size());
   // for(size_t iState=0;iState<c.states.size();iState++)
@@ -1252,8 +1257,8 @@ void c()
 #undef PROVIDE_BIN_ACTION
   
   PROVIDE_ACTION_WITH_N_SYMBOLS("unaryAssign",2,return std::make_shared<ASTNode>(AssignNode{.lhs=subNodes[0],.rhs=subNodes[1]}));
-  PROVIDE_ACTION_WITH_N_SYMBOLS("firstFuncCallArg",1,return std::make_shared<ASTNode>(ASTNodesNode{.subNodes{subNodes[0]}}));
-  PROVIDE_ACTION_WITH_N_SYMBOLS("appendFuncCallArg",2,fetch<ASTNodesNode>(subNodes,0).subNodes.push_back(subNodes[1]);return subNodes[0]);
+  PROVIDE_ACTION_WITH_N_SYMBOLS("firstExprOfList",1,return std::make_shared<ASTNode>(ASTNodesNode{.subNodes{subNodes[0]}}));
+  PROVIDE_ACTION_WITH_N_SYMBOLS("appendExprToList",2,fetch<ASTNodesNode>(subNodes,0).subNodes.push_back(subNodes[1]);return subNodes[0]);
   PROVIDE_ACTION_WITH_N_SYMBOLS("emptyFuncCall",1,return std::make_shared<ASTNode>(FuncCallNode{.name=fetch<IdNode>(subNodes,0).name,.args{}}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("funcCall",2,return std::make_shared<ASTNode>(FuncCallNode{.name=fetch<IdNode>(subNodes,0).name,.args=fetch<ASTNodesNode>(subNodes,1).subNodes}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("convToId",1,return std::make_shared<ASTNode>(IdNode{.name=unvariant<std::string>(fetch<ValueNode>(subNodes,0).value)}));
