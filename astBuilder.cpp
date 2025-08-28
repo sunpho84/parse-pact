@@ -13,6 +13,19 @@
 
 using namespace pp::internal;
 
+using Time=
+  std::chrono::time_point<std::chrono::high_resolution_clock>;
+
+Time take_time()
+{
+  return std::chrono::high_resolution_clock::now();
+}
+
+double time_diff_with_now(const Time& start)
+{
+  return std::chrono::duration_cast<std::chrono::microseconds>(take_time()-start).count()/1e6;
+}
+
 #define N_VARIADIC_ARGS(ARGS...)			\
   {std::tuple_size_v<decltype(std::make_tuple(ARGS))>}
 
@@ -108,6 +121,13 @@ requires(Op1 op1,
 };
 
 template <typename Op>
+concept Unotsable=
+requires(Op op)
+{
+  !op;
+};
+
+template <typename Op>
 concept Uplussable=
 requires(Op op)
 {
@@ -153,6 +173,7 @@ struct UnOpNode;
   using U ## NAME ## Node=				\
     UnOpNode<U ## NAME>
 
+DEFINE_UN_NODE(Not,!,);
 DEFINE_UN_NODE(Plus,+,);
 DEFINE_UN_NODE(Minus,-,);
 
@@ -208,6 +229,7 @@ DEFINE_BIN_NODE(Sum,+);
 DEFINE_BIN_NODE(Diff,-);
 DEFINE_BIN_NODE(Prod,*);
 DEFINE_BIN_NODE(Div,/);
+DEFINE_BIN_NODE(Mod,%);
 DEFINE_BIN_NODE(Smaller,<);
 DEFINE_BIN_NODE(Greater,>);
 DEFINE_BIN_NODE(SmallerEqual,<=);
@@ -238,6 +260,7 @@ using ASTNode=
 	       IdNode,
 	       UPlusNode,
 	       UMinusNode,
+	       UNotNode,
 	       UPostfixIncrementNode,
 	       UPostfixDecrementNode,
 	       URefNode,
@@ -245,6 +268,7 @@ using ASTNode=
 	       DiffNode,
 	       ProdNode,
 	       DivNode,
+	       ModNode,
 	       SmallerNode,
 	       GreaterNode,
 	       SmallerEqualNode,
@@ -272,8 +296,15 @@ struct Function;
 
 struct HostFunction;
 
+struct ValuesList;
+
 using Value=
-  std::variant<std::monostate,std::string,int,double,Function,HostFunction>;
+  std::variant<std::monostate,std::string,int,double,Function,HostFunction,ValuesList>;
+
+struct ValuesList
+{
+  std::vector<Value> data;
+};
 
 struct Evaluator;
 
@@ -1019,8 +1050,11 @@ void c()
     "   %left \">=\";"
     "   %left \"\\+\";"
     "   %left \"\\-\";"
+    "   %left \"%\";"
     "   %left \"\\*\";"
     "   %left \"/\";"
+    "   %right UNARY_ARITHMETIC;"
+    "   %right \"&\";"
     "   %right \"!\";"
     "   %left \"\\-\\-\";"
     "   %left \"\\+\\+\";"
@@ -1063,78 +1097,53 @@ void c()
     "               ;"
     "    expression_statement : expression \";\" [return(0)]"
     "                           ;"
-    "    expression : logical_or_expression [return]"
+    "    expression : identifier [return]"
+    "               | \"[0-9]+\" [convToInt]"
+    "               | \"([0-9]+(\\.[0-9]*)?|(\\.[0-9]+))((e|E)(\\+|\\-)?[0-9]+)?\" [convToFloat]"
+    "               | \"\\\"[^\\\"]*\\\"\" [convToStr]"
+    "               | \"\\(\" expression \"\\)\" [return(1)]"
+    "               | identifier \"\\(\" \"\\)\" %precedence FUNCTION_CALL [emptyFuncCall(0)] "
+    "               | identifier \"\\(\" expressions_list \"\\)\" %precedence FUNCTION_CALL [funcCall(0,2)] "
+    "               | expression \"\\+\" expression [binarySum(0,2)]"
+    "               | expression \"\\-\" expression [binaryDiff(0,2)]"
+    "               | expression \"\\*\" expression [binaryProd(0,2)]"
+    "               | expression \"/\" expression [binaryDiv(0,2)]"
+    "               | expression \"%\" expression [binaryMod(0,2)]"
+    "               | \"\\+\" expression %precedence UNARY_ARITHMETIC [unaryPlus(1)]"
+    "               | \"\\-\" expression %precedence UNARY_ARITHMETIC [unaryMinus(1)]"
+    "               | unary_reference [return]"
+    "               | \"!\" expression [unaryNot(1)]"
+    "               | expression \"\\+\\+\" [unaryPostfixIncrement(0)]"
+    "               | expression \"\\-\\-\" [unaryPostfixDecrement(0)]"
+    "               | expression \"<\" expression [binarySmaller(0,2)]"
+    "               | expression \">\" expression [binaryGreater(0,2)]"
+    "               | expression \"<=\" expression [binarySmallerEqual(0,2)]"
+    "               | expression \">=\" expression [binaryGreaterEqual(0,2)]"
+    "               | expression \"==\" expression [binaryCompare(0,2)]"
+    "               | expression \"!=\" expression [binaryInequal(0,2)]"
+    "               | expression \"&&|and\" expression [binaryAnd(0,2)]"
+    "               | expression \"\\|\\||or\" expression [binaryOr(0,2)]"
     "               | assign_expression [return]"
     "               | identifier \"\\*=\" expression [unaryProdAssign]"
     "               | identifier \"/=\" expression [unaryDivAssign]"
     "               | identifier \"\\+=\" expression [unarySumAssign]"
     "               | identifier \"\\-=\" expression [unaryDiffAssign]"
     "               ;"
-    "    assign_expression: identifier \"=\" expression [unaryAssign(0,2)]"
-    "                     ;"
-    "    logical_or_expression : logical_and_expression [return]"
-    "                          | logical_or_expression \"\\|\\||or\" logical_and_expression [binaryOr(0,2)]"
-    "                          ;"
-    "    logical_and_expression : equality_expression [return]"
-    "                           | logical_and_expression \"&&|and\" equality_expression [binaryAnd(0,2)]"
-    "                           ;"
-    "    equality_expression : relational_expression [return]"
-    "                        | equality_expression \"==\" relational_expression [binaryCompare(0,2)]"
-    "                        | equality_expression \"!=\" relational_expression [binaryInequal(0,2)]"
-    "                        ;"
-    "    relational_expression : additive_expression %precedence \"<=\" [return]"
-    "                          | relational_expression \"<\" additive_expression [binarySmaller(0,2)]"
-    "                          | relational_expression \">\" additive_expression [binaryGreater(0,2)]"
-    "                          | relational_expression \"<=\" additive_expression [binarySmallerEqual(0,2)]"
-    "                          | relational_expression \">=\" additive_expression [binaryGreaterEqual(0,2)]"
-    "                          ;"
-    "    additive_expression : multiplicative_expression [return]"
-    "                        | additive_expression \"\\+\" multiplicative_expression [binarySum(0,2)]"
-    "                        | additive_expression \"\\-\" multiplicative_expression [binaryDiff(0,2)]"
-    "                        ;"
-    "    multiplicative_expression : unary_expression [return]"
-    "                              | multiplicative_expression \"\\*\" unary_expression [binaryProd(0,2)]"
-    "                              | multiplicative_expression \"/\" unary_expression [binaryDiv(0,2)]"
-    "                              | multiplicative_expression \"%\" unary_expression [binaryModule(0,2)]"
-    "                              ;"
-    "    unary_expression : postfix_expression [return]"
-    "                     | \"\\+\" unary_expression [unaryPlus(1)]"
-    "                     | \"\\-\" unary_expression [unaryMinus(1)]"
-    "                     | unary_reference [return]"
-    "                     | \"!\" unary_expression [unaryNot]"
-    "                     ;"
-    "    unary_reference : \"&\" unary_expression [unaryReference(1)]"
+    "    assign_expression : lhs \"=\" expression [unaryAssign(0,2)]"
+    "                      ;"
+    "    lhs : identifier [getPtrOfId]"
+    "        | lhs \"[\" expression \"]\" [subscribe(0,2)]"
+    "        ;"
+    "    unary_reference : \"&\" expression [unaryReference(1)]"
     "                    ;"
-    "    postfix_expression : primary_expression [return]"
-    "                       | postfix_expression \"\\+\\+\" [unaryPostfixIncrement(0)]"
-    "                       | postfix_expression \"\\-\\-\" [unaryPostfixDecrement(0)]"
-    "                       ;"
     "    expressions_list : expression [firstExprOfList]"
     "                     | expressions_list \",\" expression [appendExprToList(0,2)]"
     "                     ;"
-    "    primary_expression : identifier [return]"
-    "                       | integer_constant [return]"
-    "                       | floating_constant [return]"
-    "                       | string [return]"
-    "                       | \"\\(\" expression \"\\)\" [return(1)]"
-    "                       | array [return(0)]"
-    "                       | function_call [return(0)]"
-    "                       ;"
-    "    array: \"\\[\" expressions_list \"\\]\" [return(2)]"
-    "         ;"
-    "    function_call : identifier \"\\(\" \"\\)\" %precedence FUNCTION_CALL [emptyFuncCall(0)] "
-    "                  | identifier \"\\(\" expressions_list \"\\)\" %precedence FUNCTION_CALL [funcCall(0,2)] "
-    "                  ;"
     "    identifier : \"[a-zA-Z_][a-zA-Z0-9_]*\" [convToId]"
     "               ;"
-    "    integer_constant : \"[0-9]+\" [convToInt]"
-    "                     ;"
-    "    floating_constant : \"[0-9]+(\\.[0-9]+)?((e|E)(\\+|\\-)?[0-9]+)?\" [convToFloat]"
-    "                      ;"
-    "    string : \"\\\"[^\\\"]*\\\"\" [convToStr]"
-    "           ;"
     "}";
   
+  // verbose=true;
   const auto c=createGrammar(cGrammar);
   
   for(size_t iState=0;iState<c.states.size();iState++)
@@ -1232,6 +1241,7 @@ void c()
   
   PROVIDE_UN_ACTION(Plus);
   PROVIDE_UN_ACTION(Minus);
+  PROVIDE_UN_ACTION(Not);
   PROVIDE_UN_ACTION(PostfixIncrement);
   PROVIDE_UN_ACTION(PostfixDecrement);
   
@@ -1245,6 +1255,7 @@ void c()
   PROVIDE_BIN_ACTION(Diff);
   PROVIDE_BIN_ACTION(Prod);
   PROVIDE_BIN_ACTION(Div);
+  PROVIDE_BIN_ACTION(Mod);
   PROVIDE_BIN_ACTION(Smaller);
   PROVIDE_BIN_ACTION(Greater);
   PROVIDE_BIN_ACTION(SmallerEqual);
@@ -1323,19 +1334,23 @@ void c()
   
   std::cout<<"Creating the parse tree\n";
   
+  auto ptCreate=take_time();
   auto pt=
     createParseTree(c,&ext[0]);
+  std::cout<<"Time to create the parse tree: "<<time_diff_with_now(ptCreate)<<"\n";
   
   /////////////////////////////////////////////////////////////////
   
   std::cout<<"Creating the AST\n";
   
+  auto astCreate=take_time();
   std::shared_ptr<ASTNode> r=
     ptExecutor.execParseTree(pt);
+  std::cout<<"Time to build the AST: "<<time_diff_with_now(astCreate)<<"\n";
   
   /////////////////////////////////////////////////////////////////
   
-  std::cout<<"Evaluating the AST\n";
+  std::cout<<"Preparing the evaluator\n";
   
   Evaluator ev;
   
@@ -1351,12 +1366,19 @@ void c()
 	if constexpr(Streamable<decltype(v)>)
 	  std::cout<<v;
 	else
-	  diagnostic("unprintable type: ",typeid(decltype(v)).name());
+	  std::cout<<"unprintable type: "<<typeid(decltype(v)).name()<<"\n";
       },arg);
       
       return {};
     }};
-
+  
+  ev.env["list"]=
+    HostFunction{
+    [](std::vector<Value>& args)->Value
+    {
+      return ValuesList{args};
+    }};
+  
 #define REGISTER_ARGLESS_HOST_FUNCTION(NAME)	\
   ev.env[#NAME]=				\
     HostFunction{				\
@@ -1411,7 +1433,13 @@ void c()
     REGISTER_HOST_FUNCTION(to_string,args[0]);
   }
   
+  /////////////////////////////////////////////////////////////////
+  
+  std::cout<<"Evaluating the AST\n";
+  
+  auto t=take_time();
   std::visit(ev,*r);
+  std::cout<<"Time to run the ast: "<<time_diff_with_now(t)<<"\n";
   
   /////////////////////////////////////////////////////////////////
   
