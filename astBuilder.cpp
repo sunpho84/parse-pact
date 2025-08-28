@@ -249,6 +249,8 @@ struct FuncDefNode;
 
 struct FuncCallNode;
 
+struct SubscribeNode;
+
 struct ReturnNode;
 
 struct IfNode;
@@ -281,6 +283,7 @@ using ASTNode=
 	       InequalNode,
 	       FuncDefNode,
 	       FuncCallNode,
+	       SubscribeNode,
 	       ReturnNode,
 	       ValueNode,
 	       AssignNode>;
@@ -353,6 +356,13 @@ struct FuncCallNode
   std::vector<std::shared_ptr<ASTNode>> args;
 };
 
+struct SubscribeNode
+{
+  std::shared_ptr<ASTNode> base;
+  
+  std::shared_ptr<ASTNode> subscr;
+};
+
 struct ReturnNode
 {
   std::shared_ptr<ASTNode> arg;
@@ -408,6 +418,16 @@ struct Environment
 	return parent->find(name);
       else
 	return {};
+  }
+  
+  Value& at(const std::string& name)
+  {
+    std::shared_ptr<Value> f=find(name);
+    
+    if(f==nullptr)
+      errorEmitter("Trying to use uninitialized variable ",name);
+    
+    return *f;
   }
   
   Value& operator[](const std::string& name)
@@ -537,6 +557,41 @@ struct Evaluator
     return std::monostate{};
   }
   
+  Value operator()(const SubscribeNode& subscribeNode)
+  {
+    Value s=std::visit(*this,*subscribeNode.subscr);
+    int* _i=std::get_if<int>(&s);
+
+    if(not _i)
+      errorEmitter("index of subscrition is not an integer but ",variantInnerTypeName(s));
+    
+    const int i=*_i;
+    if(i<0)
+      errorEmitter("Trying to subscribe with negative index ",i);
+    
+    std::shared_ptr<Value> v;
+    if(IdNode* idNode=std::get_if<IdNode>(&*subscribeNode.base))
+      {
+	v=env.find(idNode->name);
+	if(v==nullptr)
+	  errorEmitter("Trying to use uninitialized variable ",idNode->name);
+      }
+    else
+      v=std::make_shared<Value>(std::visit(*this,*subscribeNode.base));
+    
+    if(ValuesList* vl=std::get_if<ValuesList>(&*v))
+      {
+	if(const size_t m=vl->data.size();i>=m)
+	  errorEmitter("Trying to subscribe a vector of size ",m," with index ",i);
+	
+	return vl->data[i];
+      }
+    else
+      errorEmitter("trying to subscribe non-list");
+    
+    return {};
+  }
+
   Value operator()(const ReturnNode& returnNode)
   {
     return std::visit(*this,*returnNode.arg);
@@ -622,13 +677,7 @@ struct Evaluator
   
   Value operator()(const IdNode& idNode)
   {
-    const auto v=
-      env.find(idNode.name);
-    
-    if(not v)
-      errorEmitter("using uninitialized variable ",idNode.name);
-    
-    return *v;
+    return env.at(idNode.name);
   }
   
   template <typename T>
@@ -1300,6 +1349,7 @@ void c()
   PROVIDE_ACTION_WITH_N_SYMBOLS("emptyFuncCall",1,return std::make_shared<ASTNode>(FuncCallNode{.fetch=subNodes[0],.args{}}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("funcCall",2,return std::make_shared<ASTNode>(FuncCallNode{.fetch=subNodes[0],.args=fetch<ASTNodesNode>(subNodes,1).subNodes}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("funcReturn",1,return std::make_shared<ASTNode>(ReturnNode{.arg=subNodes[0]}));
+  PROVIDE_ACTION_WITH_N_SYMBOLS("subscribe",2,return std::make_shared<ASTNode>(SubscribeNode{.base=subNodes[0],.subscr=subNodes[1]}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("convToId",1,return std::make_shared<ASTNode>(IdNode{.name=unvariant<std::string>(fetch<ValueNode>(subNodes,0).value)}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("convToStr",1,return std::make_shared<ASTNode>(ValueNode{unescapeString(unvariant<std::string>(fetch<ValueNode>(subNodes,0).value))}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("ifStatement",2,return std::make_shared<ASTNode>(IfNode{.subNodes{subNodes}}));
