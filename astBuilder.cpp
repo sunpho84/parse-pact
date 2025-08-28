@@ -310,6 +310,8 @@ using Value=
 struct ValuesList
 {
   std::vector<Value> data;
+  
+  Value& operator[](const int& i);
 };
 
 struct Evaluator;
@@ -327,6 +329,40 @@ struct HostFunction :
   std::function<Value(std::vector<Value>&)>
 {
 };
+
+ValuesList operator+(const ValuesList& a,
+		     const ValuesList& b)
+{
+  ValuesList res;
+    
+  res.data.reserve(a.data.size()+b.data.size());
+  
+  for(const std::vector<Value>* v : {&a.data,&b.data})
+    for(const Value& vi : *v)
+      res.data.push_back(vi);
+  
+  return res;
+}
+
+struct Evaluator;
+
+std::ostream& operator<<(std::ostream& os,
+			 const ValuesList& v)
+{
+  os<<"list(";
+  for(size_t i=0;i<v.data.size();i++)
+    std::visit([i,&os](const auto& v)
+    {
+      if(i)
+	os<<",";
+      if constexpr(Streamable<decltype(v)>)
+	os<<v;
+      else os<<"(unprintable)";
+    },v.data[i]);
+  os<<")";
+  
+  return os;
+}
 
 struct AssignNode
 {
@@ -361,6 +397,9 @@ struct SubscribeNode
   std::shared_ptr<ASTNode> base;
   
   std::shared_ptr<ASTNode> subscr;
+
+  template <typename E>
+  int getIndex(E&& e) const;
 };
 
 struct ReturnNode
@@ -402,6 +441,32 @@ struct BinOpNode
   
   std::shared_ptr<ASTNode> op2;
 };
+
+/////////////////////////////////////////////////////////////////
+
+template <typename E>
+int SubscribeNode::getIndex(E&& e) const
+{
+  Value s=std::visit(std::forward<E>(e),*subscr);
+  int* _i=std::get_if<int>(&s);
+  
+  if(not _i)
+    errorEmitter("index of subscrition is not an integer but is of type: ",variantInnerTypeName(s));
+  
+  const int i=*_i;
+  if(i<0)
+    errorEmitter("Trying to subscribe with negative index ",i);
+  
+  return i;
+}
+
+Value& ValuesList::operator[](const int& i)
+{
+  if(const size_t m=data.size();i>=m)
+    errorEmitter("Trying to subscribe a vector of size ",m," using index ",i);
+  
+  return data[i];
+}
 
 struct Environment
 {
@@ -557,22 +622,16 @@ struct Evaluator
     return std::monostate{};
   }
   
+  
   Value operator()(const SubscribeNode& subscribeNode)
   {
-    Value s=std::visit(*this,*subscribeNode.subscr);
-    int* _i=std::get_if<int>(&s);
-
-    if(not _i)
-      errorEmitter("index of subscrition is not an integer but ",variantInnerTypeName(s));
-    
-    const int i=*_i;
-    if(i<0)
-      errorEmitter("Trying to subscribe with negative index ",i);
+    const int i=subscribeNode.getIndex(*this);
     
     std::shared_ptr<Value> v;
     if(IdNode* idNode=std::get_if<IdNode>(&*subscribeNode.base))
       {
 	v=env.find(idNode->name);
+	
 	if(v==nullptr)
 	  errorEmitter("Trying to use uninitialized variable ",idNode->name);
       }
@@ -580,12 +639,7 @@ struct Evaluator
       v=std::make_shared<Value>(std::visit(*this,*subscribeNode.base));
     
     if(ValuesList* vl=std::get_if<ValuesList>(&*v))
-      {
-	if(const size_t m=vl->data.size();i>=m)
-	  errorEmitter("Trying to subscribe a vector of size ",m," with index ",i);
-	
-	return vl->data[i];
-      }
+      return (*vl)[i];
     else
       errorEmitter("trying to subscribe non-list");
     
@@ -599,17 +653,37 @@ struct Evaluator
   
   Value operator()(const AssignNode& assignNode)
   {
-    IdNode* s=
-      std::get_if<IdNode>(&*assignNode.lhs);
+    auto getLhs=
+      [this](auto&& getLhs,
+	 auto&& node)->Value*
+      {
+	if(IdNode* s=
+	   std::get_if<IdNode>(&node))
+	  return &env[s->name];
+	  
+	if(SubscribeNode* s=
+	   std::get_if<SubscribeNode>(&node))
+	  {
+	    Value* base=getLhs(getLhs,*s->base);
+	    
+	    if(ValuesList* vl=std::get_if<ValuesList>(base))
+	      return &(*vl)[s->getIndex(*this)];
+	    else
+	      errorEmitter("base of the subscription is not an lhs, but of type ",variantInnerTypeName(*base));
+	    
+	    return {};
+	  }
+	
+	errorEmitter("Trying to use expression of type ",variantInnerTypeName(node)," as a lhs");
+	
+	return {};
+      };
     
-    if(s==nullptr)
-      errorEmitter("lhs of assign node is not an identifier");
+    auto& lhs=*getLhs(getLhs,*assignNode.lhs);
     
-    Value& v=env[s->name];
+    lhs=std::visit(*this,*assignNode.rhs);
     
-    return v=std::visit(*this,*assignNode.rhs);
-    
-    return v;
+    return lhs;
   }
   
   Value operator()(const IfNode& ifNode)
@@ -1102,8 +1176,9 @@ void c()
     "   %whitespace \"" BARE_WHITESPACES "|" CPP_COMMENT "|" C_COMMENT "\";"
     "   %none lowerThanElse;"
     "   %none \"else\";"
-    // "   %left \"\\(\";"
-    // "   %left \"\\)\";"
+    "   %left \"\\(\";"
+    "   %left \"\\)\";"
+    "   %none BRACKETS;"
     "   %left \",\";"
     "   %right \"=\";"
     "   %right \"\\+=\";"
@@ -1144,7 +1219,7 @@ void c()
     "                         | functionDefinitionArgs \",\" functionDefinitionArg [appendStatement(0,2)]"
     "                         ;"
     "   functionDefinitionArg: identifier [return]"
-    "                        | assign_expression [return]"
+    // "                        | assign_expression [return]" //reduce/reduce conflict
     "                        | unary_reference [return]"
     "                        ;"
     "   forStatement: \"for\" \"\\(\" forInit \";\" forCheck \";\" forIncr \"\\)\" statement [forStatement(2,4,6,8)]"
@@ -1168,7 +1243,7 @@ void c()
     "               ;"
     "    expression_statement : expression \";\" [return(0)]"
     "                         ;"
-    "    expression : postfix_expression [return(0)]"
+    "    expression : postfix_expression %precedence \"\\+\\+\" [return(0)]"
     "               | expression \"\\+\" expression [binarySum(0,2)]"
     "               | expression \"\\-\" expression [binaryDiff(0,2)]"
     "               | expression \"\\*\" expression [binaryProd(0,2)]"
@@ -1203,9 +1278,9 @@ void c()
     "                       | \"[0-9]+\" [convToInt]"
     "                       | \"([0-9]+(\\.[0-9]*)?|(\\.[0-9]+))((e|E)(\\+|\\-)?[0-9]+)?\" [convToFloat]"
     "                       | \"\\\"[^\\\"]*\\\"\" [convToStr]"
-    "                       | \"\\(\" expression \"\\)\" [return(1)]"
+    "                       | \"\\(\" expression \"\\)\" %precedence BRACKETS [return(1)]"
     "                       ;"
-    "    assign_expression : identifier \"=\" expression [unaryAssign(0,2)]"
+    "    assign_expression : postfix_expression \"=\" expression %precedence \"=\" [unaryAssign(0,2)]"
     "                      ;"
     // "    lhs : identifier [getPtrOfId]"
     // "        | lhs \"[\" expression \"]\" [subscribe(0,2)]"
