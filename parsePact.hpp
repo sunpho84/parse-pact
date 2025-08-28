@@ -3676,9 +3676,9 @@ namespace pp::internal
       
       if(productionPrecedence==0 or symbol.precedence==0 or
 	 (symbol.precedence==productionPrecedence and symbol.associativity==GrammarSymbol::Associativity::NONE))
-	errorEmitter((std::string("shift/reduce conflict, at state:\n")+describe(stateFrom,"       ")+
+	errorEmitter(std::string("shift/reduce conflict, at state:\n")+describe(stateFrom,"       ")+
 		      " "+describe(transition)+"\n"
-		      "but could be reduced with production \'"+describe(production)+"' with precedence: "+std::to_string(productionPrecedence)+" symbol precedence: "+std::to_string(symbol.precedence)+" symbol associativity: "+std::to_string((int)symbol.associativity)).c_str(),"\n");
+		      "but could be reduced with production \'"+describe(production)+"' with precedence: "+std::to_string(productionPrecedence)+" symbol precedence: "+std::to_string(symbol.precedence)+" symbol associativity: "+std::to_string((int)symbol.associativity),"\n");
       else
 	if(productionPrecedence>symbol.precedence or (symbol.precedence==productionPrecedence and symbol.associativity==GrammarSymbol::Associativity::RIGHT))
 	  {
@@ -3700,6 +3700,7 @@ namespace pp::internal
     
     /// Try to solve a reduce/reduce conflict
     constexpr void dealWithReduceReduceConflict(GrammarTransition& transition,
+						const GrammarState& stateFrom,
 						const GrammarSymbol& symbol,
 						const size_t& iProduction)
     {
