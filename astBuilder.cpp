@@ -249,6 +249,8 @@ struct FuncDefNode;
 
 struct FuncCallNode;
 
+struct ReturnNode;
+
 struct IfNode;
 
 struct ASTNodesNode;
@@ -279,6 +281,7 @@ using ASTNode=
 	       InequalNode,
 	       FuncDefNode,
 	       FuncCallNode,
+	       ReturnNode,
 	       ValueNode,
 	       AssignNode>;
 
@@ -348,6 +351,11 @@ struct FuncCallNode
   std::string name;
   
   std::vector<std::shared_ptr<ASTNode>> args;
+};
+
+struct ReturnNode
+{
+  std::shared_ptr<ASTNode> arg;
 };
 
 struct IfNode
@@ -527,6 +535,11 @@ struct Evaluator
     return std::monostate{};
   }
   
+  Value operator()(const ReturnNode& returnNode)
+  {
+    return std::visit(*this,*returnNode.arg);
+  }
+  
   Value operator()(const AssignNode& assignNode)
   {
     IdNode* s=
@@ -586,26 +599,32 @@ struct Evaluator
   Value operator()(const ASTNodesNode& astNodesNode)
   {
     /// Creates a subev only if there is already one above
-    Evaluator* subev=this;
+    std::shared_ptr<Evaluator> _subev;
+    Evaluator *subev=this;
     if(env.parent!=nullptr)
-      subev=new Evaluator{&env};
+      {
+	_subev=std::make_shared<Evaluator>(&env);
+	subev=_subev.get();
+      }
     
-    for(const std::shared_ptr<ASTNode>& astNode : astNodesNode.subNodes)
-      std::visit(*subev,*astNode);
+    for(auto& n : astNodesNode.subNodes)
+      {
+	if(std::get_if<ReturnNode>(&*n))
+	  return std::visit(*subev,*n);
+	else
+	  std::visit(*subev,*n);
+      }
     
-    if(env.parent!=nullptr)
-      delete subev;
-    
-    return std::monostate{};
+    return {};
   }
   
-  Value operator()(const IdNode& symNode)
+  Value operator()(const IdNode& idNode)
   {
     const auto v=
-      env.find(symNode.name);
+      env.find(idNode.name);
     
     if(not v)
-      errorEmitter("using uninitialized variable ",symNode.name);
+      errorEmitter("using uninitialized variable ",idNode.name);
     
     return *v;
   }
@@ -629,7 +648,7 @@ struct Evaluator
 	}
     },r);
   }
-
+  
   template <typename T>
   Value operator()(const PostfixVariateNode<T>& node)
   {
@@ -1065,6 +1084,7 @@ void c()
     "             | forStatement [return]"
     "             | ifStatement [return]"
     "             | functionDefinition [return]"
+    "             | \"return\" expression_statement [funcReturn(1)]"
     "             ;"
     "   functionDefinition: \"fun\" identifier \"\\(\" functionDefinitionArgs \"\\)\" compound_statement [funcDef(1,3,5)]"
     "                     ;"
@@ -1272,6 +1292,7 @@ void c()
   PROVIDE_ACTION_WITH_N_SYMBOLS("appendExprToList",2,fetch<ASTNodesNode>(subNodes,0).subNodes.push_back(subNodes[1]);return subNodes[0]);
   PROVIDE_ACTION_WITH_N_SYMBOLS("emptyFuncCall",1,return std::make_shared<ASTNode>(FuncCallNode{.name=fetch<IdNode>(subNodes,0).name,.args{}}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("funcCall",2,return std::make_shared<ASTNode>(FuncCallNode{.name=fetch<IdNode>(subNodes,0).name,.args=fetch<ASTNodesNode>(subNodes,1).subNodes}));
+  PROVIDE_ACTION_WITH_N_SYMBOLS("funcReturn",1,return std::make_shared<ASTNode>(ReturnNode{.arg=subNodes[0]}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("convToId",1,return std::make_shared<ASTNode>(IdNode{.name=unvariant<std::string>(fetch<ValueNode>(subNodes,0).value)}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("convToStr",1,return std::make_shared<ASTNode>(ValueNode{unescapeString(unvariant<std::string>(fetch<ValueNode>(subNodes,0).value))}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("ifStatement",2,return std::make_shared<ASTNode>(IfNode{.subNodes{subNodes}}));
