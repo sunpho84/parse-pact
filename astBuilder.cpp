@@ -348,7 +348,7 @@ struct FuncDefNode
 
 struct FuncCallNode
 {
-  std::string name;
+  std::shared_ptr<ASTNode> fetch;
   
   std::vector<std::shared_ptr<ASTNode>> args;
 };
@@ -469,68 +469,70 @@ struct Evaluator
   
   Value operator()(const FuncCallNode& funcCallNode)
   {
-    /// Name of the function to call
-    const std::string& fName=
-      funcCallNode.name;
+    /// Function to call
+    Value ff=
+      std::visit(*this,*funcCallNode.fetch);
     
-    if(auto nf=env.find(fName))
-      if(Function* f=std::get_if<Function>(&*nf))
-	{
-	  Evaluator subev{&env};
-	  for(const std::shared_ptr<ASTNode>& ap : funcCallNode.args)
-	    {
-	      AssignNode& a=
-		unvariant<AssignNode>(*ap);
-	      
-	      const std::string& aName=
-		unvariant<IdNode>(*a.lhs).name;
-	      
-	      if(auto it=f->args->find(aName);it==f->args->end())
-		errorEmitter("trying to pass argument ",aName," not expected by the function ",fName);
-	      else
-		if(const bool& isRef=std::get<bool>(it->second))
-		  if(IdNode* id=std::get_if<IdNode>(&*a.rhs))
-		    if(std::shared_ptr<Value> eid=env.find(id->name))
-		      {
-			diagnostic("Getting par \"",aName,"\" by ref\n");
-			subev.env.varTable[aName]=eid;
-		      }
-		    else
-		      errorEmitter("undefined symbol \"",id->name,"\" when passing argument \"",aName,"\" to function \"",fName,"\"");
-		  else
-		    errorEmitter("argument \"",aName,"\" of function \"",fName,"\" expects an id as a parameter (pass by reference)");
-		else
-		  subev.env.varTable.try_emplace(aName,std::make_shared<Value>(std::visit(*this,*a.rhs)));
-	    }
-	  
-	  // diagnostic("Calling function, specified arguments:\n");
-	  // subev.env.print();
-	  
-	  // Put possible default pars
-	  for(auto& [aName,pars] : *f->args)
-	    if(not subev.env.varTable.contains(aName))
-	      if(const std::shared_ptr<ASTNode>& optDef=std::get<1>(pars))
-		  subev.env[aName]=std::visit(*this,*optDef);
-	      else
-		errorEmitter("parameter \"",aName,"\" with no default value unspecified when calling the function \"",fName,"\"");
+    if(const IdNode* id=std::get_if<IdNode>(&*funcCallNode.fetch))
+      diagnostic("Calling function \"",id->name,"\n");
+    else
+      diagnostic("Calling anonymous function \n");
+    
+    if(Function* f=std::get_if<Function>(&ff))
+      {
+	Evaluator subev{&env};
+	for(const std::shared_ptr<ASTNode>& ap : funcCallNode.args)
+	  {
+	    AssignNode& a=
+	      unvariant<AssignNode>(*ap);
+	    
+	    const std::string& aName=
+	      unvariant<IdNode>(*a.lhs).name;
+	    
+	    if(auto it=f->args->find(aName);it==f->args->end())
+	      errorEmitter("trying to pass argument ",aName," not expected by the function");
 	    else
-	      {}
+	      if(const bool& isRef=std::get<bool>(it->second))
+		if(IdNode* id=std::get_if<IdNode>(&*a.rhs))
+		  if(std::shared_ptr<Value> eid=env.find(id->name))
+		    {
+		      diagnostic("Getting par \"",aName,"\" by ref\n");
+		      subev.env.varTable[aName]=eid;
+		    }
+		  else
+		    errorEmitter("undefined symbol \"",id->name,"\" when passing argument \"",aName,"\" to function");
+		else
+		  errorEmitter("argument \"",aName,"\" expects an id as a parameter (pass by reference)");
+	      else
+		subev.env.varTable.try_emplace(aName,std::make_shared<Value>(std::visit(*this,*a.rhs)));
+	  }
+	
+	// diagnostic("Calling function, specified arguments:\n");
+	// subev.env.print();
+	
+	// Put possible default pars
+	for(auto& [aName,pars] : *f->args)
+	  if(not subev.env.varTable.contains(aName))
+	      if(const std::shared_ptr<ASTNode>& optDef=std::get<1>(pars))
+		subev.env[aName]=std::visit(*this,*optDef);
+	      else
+		errorEmitter("parameter \"",aName,"\" with no default value unspecified when calling the function");
+	  else
+	    {}
+	
+	return std::visit(subev,*f->body);
+      }
+    else
+      if(HostFunction* hf=std::get_if<HostFunction>(&ff))
+	{
+	  std::vector<Value> evArgs;
+	  for(const std::shared_ptr<ASTNode>& ap : funcCallNode.args)
+	    evArgs.emplace_back(std::visit(*this,*ap));
 	  
-	  return std::visit(subev,*f->body);
+	  return (*hf)(evArgs);
 	}
       else
-	if(HostFunction* hf=std::get_if<HostFunction>(&*nf))
-	  {
-	    std::vector<Value> evArgs;
-	    for(const std::shared_ptr<ASTNode>& ap : funcCallNode.args)
-	      evArgs.emplace_back(std::visit(*this,*ap));
-	    
-	    return (*hf)(evArgs);
-	  }
-	else
-	  errorEmitter("Variable ",fName," is of type ",variantInnerTypeName(*nf)," not a ",typeid(Function).name());
-    else
-      errorEmitter("unable to find function: \"",fName,"\"");
+	errorEmitter("Variable is of type ",variantInnerTypeName(ff)," not a ",typeid(Function).name());
     
     return std::monostate{};
   }
@@ -1116,14 +1118,8 @@ void c()
     "               | statements statement [appendStatement]"
     "               ;"
     "    expression_statement : expression \";\" [return(0)]"
-    "                           ;"
-    "    expression : identifier [return]"
-    "               | \"[0-9]+\" [convToInt]"
-    "               | \"([0-9]+(\\.[0-9]*)?|(\\.[0-9]+))((e|E)(\\+|\\-)?[0-9]+)?\" [convToFloat]"
-    "               | \"\\\"[^\\\"]*\\\"\" [convToStr]"
-    "               | \"\\(\" expression \"\\)\" [return(1)]"
-    "               | identifier \"\\(\" \"\\)\" %precedence FUNCTION_CALL [emptyFuncCall(0)] "
-    "               | identifier \"\\(\" expressions_list \"\\)\" %precedence FUNCTION_CALL [funcCall(0,2)] "
+    "                         ;"
+    "    expression : postfix_expression [return(0)]"
     "               | expression \"\\+\" expression [binarySum(0,2)]"
     "               | expression \"\\-\" expression [binaryDiff(0,2)]"
     "               | expression \"\\*\" expression [binaryProd(0,2)]"
@@ -1133,8 +1129,6 @@ void c()
     "               | \"\\-\" expression %precedence UNARY_ARITHMETIC [unaryMinus(1)]"
     "               | unary_reference [return]"
     "               | \"!\" expression [unaryNot(1)]"
-    "               | expression \"\\+\\+\" [unaryPostfixIncrement(0)]"
-    "               | expression \"\\-\\-\" [unaryPostfixDecrement(0)]"
     "               | expression \"<\" expression [binarySmaller(0,2)]"
     "               | expression \">\" expression [binaryGreater(0,2)]"
     "               | expression \"<=\" expression [binarySmallerEqual(0,2)]"
@@ -1149,11 +1143,24 @@ void c()
     "               | identifier \"\\+=\" expression [unarySumAssign]"
     "               | identifier \"\\-=\" expression [unaryDiffAssign]"
     "               ;"
-    "    assign_expression : lhs \"=\" expression [unaryAssign(0,2)]"
+    "    postfix_expression : primary_expression [return(0)]"
+    "                       | postfix_expression \"\\+\\+\" [unaryPostfixIncrement(0)]"
+    "                       | postfix_expression \"\\-\\-\" [unaryPostfixDecrement(0)]"
+    "                       | postfix_expression \"\\(\" \"\\)\" %precedence FUNCTION_CALL [emptyFuncCall(0)] "
+    "                       | postfix_expression \"\\(\" expressions_list \"\\)\" %precedence FUNCTION_CALL [funcCall(0,2)] "
+    "                       | postfix_expression \"\\[\" expression \"\\]\" [subscribe(0,2)] "
+    "                       ;"
+    "    primary_expression : identifier [return]"
+    "                       | \"[0-9]+\" [convToInt]"
+    "                       | \"([0-9]+(\\.[0-9]*)?|(\\.[0-9]+))((e|E)(\\+|\\-)?[0-9]+)?\" [convToFloat]"
+    "                       | \"\\\"[^\\\"]*\\\"\" [convToStr]"
+    "                       | \"\\(\" expression \"\\)\" [return(1)]"
+    "                       ;"
+    "    assign_expression : identifier \"=\" expression [unaryAssign(0,2)]"
     "                      ;"
-    "    lhs : identifier [getPtrOfId]"
-    "        | lhs \"[\" expression \"]\" [subscribe(0,2)]"
-    "        ;"
+    // "    lhs : identifier [getPtrOfId]"
+    // "        | lhs \"[\" expression \"]\" [subscribe(0,2)]"
+    // "        ;"
     "    unary_reference : \"&\" expression [unaryReference(1)]"
     "                    ;"
     "    expressions_list : expression [firstExprOfList]"
@@ -1290,8 +1297,8 @@ void c()
   PROVIDE_ACTION_WITH_N_SYMBOLS("unaryAssign",2,return std::make_shared<ASTNode>(AssignNode{.lhs=subNodes[0],.rhs=subNodes[1]}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("firstExprOfList",1,return std::make_shared<ASTNode>(ASTNodesNode{.subNodes{subNodes[0]}}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("appendExprToList",2,fetch<ASTNodesNode>(subNodes,0).subNodes.push_back(subNodes[1]);return subNodes[0]);
-  PROVIDE_ACTION_WITH_N_SYMBOLS("emptyFuncCall",1,return std::make_shared<ASTNode>(FuncCallNode{.name=fetch<IdNode>(subNodes,0).name,.args{}}));
-  PROVIDE_ACTION_WITH_N_SYMBOLS("funcCall",2,return std::make_shared<ASTNode>(FuncCallNode{.name=fetch<IdNode>(subNodes,0).name,.args=fetch<ASTNodesNode>(subNodes,1).subNodes}));
+  PROVIDE_ACTION_WITH_N_SYMBOLS("emptyFuncCall",1,return std::make_shared<ASTNode>(FuncCallNode{.fetch=subNodes[0],.args{}}));
+  PROVIDE_ACTION_WITH_N_SYMBOLS("funcCall",2,return std::make_shared<ASTNode>(FuncCallNode{.fetch=subNodes[0],.args=fetch<ASTNodesNode>(subNodes,1).subNodes}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("funcReturn",1,return std::make_shared<ASTNode>(ReturnNode{.arg=subNodes[0]}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("convToId",1,return std::make_shared<ASTNode>(IdNode{.name=unvariant<std::string>(fetch<ValueNode>(subNodes,0).value)}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("convToStr",1,return std::make_shared<ASTNode>(ValueNode{unescapeString(unvariant<std::string>(fetch<ValueNode>(subNodes,0).value))}));
