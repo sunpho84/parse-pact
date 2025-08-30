@@ -1295,7 +1295,9 @@ void c()
     "}";
   
   // verbose=true;
+  auto gCreateMoment=take_time();
   const auto c=createGrammar(cGrammar);
+  std::cout<<"Time to create the grammar: "<<time_diff_with_now(gCreateMoment)<<"\n";
   
   for(size_t iState=0;iState<c.states.size();iState++)
     {
