@@ -1458,8 +1458,6 @@ void c()
 				return std::make_shared<ASTNode>(FuncDefNode{name,args,body});
 				);
   
-  std::cout<<"Executing the parse tree to generate the AST\n";
-  
   /////////////////////////////////////////////////////////////////
   
   std::vector<char> ext;

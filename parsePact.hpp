@@ -3709,8 +3709,9 @@ namespace pp::internal
       
       if(const size_t& transitionPrecedence=productions[transition.iStateOrProduction].precedence(symbols);productionPrecedence==0 or transitionPrecedence==0 or
 	 productionPrecedence==transitionPrecedence)
-	errorEmitter((std::string("reduce/reduce conflict for '")+std::string(symbols[production.iLhs()].name)+"' on '"+std::string(symbol.name)+
-		      "' ought to transition: \n\t"+describe(transition)+"\nproduction precedence: "+std::to_string(productionPrecedence)+" transition precedence: "+std::to_string(transitionPrecedence)).c_str());
+	errorEmitter(std::string("reduce/reduce conflict, at state:\n")+describe(stateFrom,"       ")+
+		      describe(transition)+" for '"+std::string(symbols[production.iLhs()].name)+"' on '"+std::string(symbol.name)+
+		      "\nproduction precedence: "+std::to_string(productionPrecedence)+" transition precedence: "+std::to_string(transitionPrecedence));
       else
 	if(productionPrecedence>transitionPrecedence)
 	  {
@@ -3777,7 +3778,7 @@ namespace pp::internal
 			    if(GrammarTransition& transition=transitions[iTransition];transition.type==GrammarTransition::Type::SHIFT)
 			      dealWithShiftReduceConflict(transition,state,symbol,iProduction);
 			    else
-			      dealWithReduceReduceConflict(transition,symbol,iProduction);
+			      dealWithReduceReduceConflict(transition,state,symbol,iProduction);
 			  }
 		      }
 		  }
