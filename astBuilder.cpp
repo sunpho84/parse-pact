@@ -5,6 +5,7 @@
 #include <parsePact.hpp>
 #include <functional>
 #include <map>
+#include <set>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -251,6 +252,8 @@ struct FuncCallNode;
 
 struct SubscribeNode;
 
+struct NamedArgNode;
+
 struct ReturnNode;
 
 struct IfNode;
@@ -284,12 +287,16 @@ using ASTNode=
 	       FuncDefNode,
 	       FuncCallNode,
 	       SubscribeNode,
+	       NamedArgNode,
 	       ReturnNode,
 	       ValueNode,
 	       AssignNode>;
 
+using FunctionArg=
+  std::tuple<std::string,bool,std::shared_ptr<ASTNode>>;
+
 using FunctionArgs=
-  std::map<std::string,std::tuple<bool,std::shared_ptr<ASTNode>>>;
+  std::vector<FunctionArg>;
 
 struct ASTNodesNode
 {
@@ -314,7 +321,6 @@ struct ValuesList
   Value& operator[](const int& i);
 };
 
-struct Evaluator;
 
 struct Function
 {
@@ -387,7 +393,7 @@ struct FuncDefNode
 
 struct FuncCallNode
 {
-  std::shared_ptr<ASTNode> fetch;
+  std::shared_ptr<ASTNode> getFun;
   
   std::vector<std::shared_ptr<ASTNode>> args;
 };
@@ -397,9 +403,16 @@ struct SubscribeNode
   std::shared_ptr<ASTNode> base;
   
   std::shared_ptr<ASTNode> subscr;
-
+  
   template <typename E>
   int getIndex(E&& e) const;
+};
+
+struct NamedArgNode
+{
+  std::string name;
+  
+  std::shared_ptr<ASTNode> expr;
 };
 
 struct ReturnNode
@@ -554,54 +567,79 @@ struct Evaluator
   
   Value operator()(const FuncCallNode& funcCallNode)
   {
-    /// Function to call
-    Value ff=
-      std::visit(*this,*funcCallNode.fetch);
-    
-    if(const IdNode* id=std::get_if<IdNode>(&*funcCallNode.fetch))
+    if(const IdNode* id=std::get_if<IdNode>(&*funcCallNode.getFun))
       diagnostic("Calling function \"",id->name,"\n");
     else
-      diagnostic("Calling anonymous function \n");
+      diagnostic("Calling anonymous function\n");
     
-    if(Function* f=std::get_if<Function>(&ff))
+    if(Value ff=std::visit(*this,*funcCallNode.getFun);
+       Function* f=std::get_if<Function>(&ff))
       {
 	Evaluator subev{&env};
+	
+	auto emplaceInSubev=
+	  [this,
+	   &f,
+	   &subev](const std::string& aName,
+		   std::shared_ptr<ASTNode> expr)
+	  {
+	    const FunctionArgs& args=
+	      (*f->args);
+	    
+	    size_t iArg=0;
+	    while(iArg<args.size() and std::get<std::string>(args[iArg])!=aName)
+	      iArg++;
+	    
+	    if(iArg==args.size())
+	      errorEmitter("trying to pass argument ",aName," not expected by the function");
+		
+	    const FunctionArg& argDef=
+	      args[iArg];
+	    
+	    if(const bool& isRef=std::get<bool>(argDef))
+	      if(IdNode* id=std::get_if<IdNode>(&*expr))
+		if(std::shared_ptr<Value> eid=env.find(id->name))
+		  {
+		    diagnostic("Getting par \"",aName,"\" by ref\n");
+		    subev.env.varTable[aName]=eid;
+		  }
+		else
+		  errorEmitter("undefined symbol \"",id->name,"\" when passing argument \"",aName,"\" to function");
+	      else
+		errorEmitter("argument \"",aName,"\" expects an id as a parameter (pass by reference)");
+	    else
+	      subev.env.varTable.try_emplace(aName,std::make_shared<Value>(std::visit(*this,*expr)));
+	  };
+	
+	size_t iNextPositionalArg{};
+	bool acceptingOnlyNamedArgs{};
 	for(const std::shared_ptr<ASTNode>& ap : funcCallNode.args)
 	  {
-	    AssignNode& a=
-	      unvariant<AssignNode>(*ap);
-	    
-	    const std::string& aName=
-	      unvariant<IdNode>(*a.lhs).name;
-	    
-	    if(auto it=f->args->find(aName);it==f->args->end())
-	      errorEmitter("trying to pass argument ",aName," not expected by the function");
+	    if(auto nn=std::get_if<NamedArgNode>(&*ap))
+	      {
+		acceptingOnlyNamedArgs=true;
+		
+		emplaceInSubev(nn->name,nn->expr);
+	      }
 	    else
-	      if(const bool& isRef=std::get<bool>(it->second))
-		if(IdNode* id=std::get_if<IdNode>(&*a.rhs))
-		  if(std::shared_ptr<Value> eid=env.find(id->name))
-		    {
-		      diagnostic("Getting par \"",aName,"\" by ref\n");
-		      subev.env.varTable[aName]=eid;
-		    }
-		  else
-		    errorEmitter("undefined symbol \"",id->name,"\" when passing argument \"",aName,"\" to function");
-		else
-		  errorEmitter("argument \"",aName,"\" expects an id as a parameter (pass by reference)");
-	      else
-		subev.env.varTable.try_emplace(aName,std::make_shared<Value>(std::visit(*this,*a.rhs)));
+	      {
+		if(acceptingOnlyNamedArgs)
+		  errorEmitter("Positional arg passed after named ones");
+		
+		emplaceInSubev(std::get<std::string>((*f->args)[iNextPositionalArg++]),ap);
+	      }
 	  }
 	
 	// diagnostic("Calling function, specified arguments:\n");
 	// subev.env.print();
 	
 	// Put possible default pars
-	for(auto& [aName,pars] : *f->args)
+	for(auto& [aName,isRef,optDef] : *f->args)
 	  if(not subev.env.varTable.contains(aName))
-	      if(const std::shared_ptr<ASTNode>& optDef=std::get<1>(pars))
-		subev.env[aName]=std::visit(*this,*optDef);
-	      else
-		errorEmitter("parameter \"",aName,"\" with no default value unspecified when calling the function");
+	    if(optDef)
+	      subev.env[aName]=std::visit(*this,*optDef);
+	    else
+	      errorEmitter("parameter \"",aName,"\" with no default value unspecified when calling the function");
 	  else
 	    {}
 	
@@ -621,7 +659,6 @@ struct Evaluator
     
     return std::monostate{};
   }
-  
   
   Value operator()(const SubscribeNode& subscribeNode)
   {
@@ -645,7 +682,24 @@ struct Evaluator
     
     return {};
   }
-
+  
+  Value operator()(const NamedArgNode& namedArgNode)
+  {
+    const std::string& name=
+      namedArgNode.name;
+    
+    auto& v=
+      env.varTable;
+    
+    auto [it,ins]=
+      v.try_emplace(name,std::make_shared<Value>(std::visit(*this,*namedArgNode.expr)));
+    
+    if(not ins)
+      errorEmitter("Cannot define twice the positional argument ",name);
+    
+    return *it->second;
+  }
+  
   Value operator()(const ReturnNode& returnNode)
   {
     return std::visit(*this,*returnNode.arg);
@@ -679,7 +733,8 @@ struct Evaluator
 	return {};
       };
     
-    auto& lhs=*getLhs(getLhs,*assignNode.lhs);
+    auto& lhs=
+      *getLhs(getLhs,*assignNode.lhs);
     
     lhs=std::visit(*this,*assignNode.rhs);
     
@@ -835,7 +890,7 @@ T& fetch(std::vector<std::shared_ptr<ASTNode>>& subNodes,
     std::get_if<T>(&*subNodes[i]);
   
   if(not s)
-    errorEmitter("subNode ",i," is not of the required type ",typeid(T).name());
+    errorEmitter("subNode ",i," is not of the required type ",typeid(T).name()," but is of type ",variantInnerTypeName(*subNodes[i]));
   
   return *s;
 }
@@ -969,7 +1024,6 @@ struct ParseTreeExecutor
   }
 };
 
-
 void c()
 {
 #define BARE_WHITESPACES			\
@@ -1022,16 +1076,8 @@ void c()
     "             | functionDefinition [return]"
     "             | \"return\" expression_statement [funcReturn(1)]"
     "             ;"
-    "   functionDefinition: \"fun\" identifier \"\\(\" functionDefinitionArgs \"\\)\" compound_statement [funcDef(1,3,5)]"
-    "                     ;"
-    "   functionDefinitionArgs: [createStatements]"
-    "                         | functionDefinitionArgs functionDefinitionArg  [appendStatement]"
-    "                         | functionDefinitionArgs \",\" functionDefinitionArg [appendStatement(0,2)]"
-    "                         ;"
-    "   functionDefinitionArg: identifier [return]"
-    // "                        | assign_expression [return]" //reduce/reduce conflict
-    "                        | unary_reference [return]"
-    "                        ;"
+    "   functionDefinition : \"fun\" identifier \"\\(\" expressionList \"\\)\" compound_statement [funcDef(1,3,5)]"
+    "                      ;"
     "   forStatement: \"for\" \"\\(\" forInit \";\" forCheck \";\" forIncr \"\\)\" statement [forStatement(2,4,6,8)]"
     "               ;"
     "   forInit: expression [return]"
@@ -1080,10 +1126,19 @@ void c()
     "    postfix_expression : primary_expression [return(0)]"
     "                       | postfix_expression \"\\+\\+\" [unaryPostfixIncrement(0)]"
     "                       | postfix_expression \"\\-\\-\" [unaryPostfixDecrement(0)]"
-    "                       | postfix_expression \"\\(\" \"\\)\" %precedence FUNCTION_CALL [emptyFuncCall(0)] "
-    "                       | postfix_expression \"\\(\" expressions_list \"\\)\" %precedence FUNCTION_CALL [funcCall(0,2)] "
+    // "                       | postfix_expression \"\\(\" \"\\)\" %precedence FUNCTION_CALL [emptyFuncCall(0)] "
+    "                       | postfix_expression \"\\(\" funcArgsList \"\\)\" %precedence FUNCTION_CALL [funcCall(0,2)] "
     "                       | postfix_expression \"\\[\" expression \"\\]\" [subscribe(0,2)] "
     "                       ;"
+    "    funcArgsList : expressionList [return]"
+    "                 | namedArgList [return]"
+    "                 | expressionList \",\" namedArgList [immediateSum(0,2)]"
+    "                 ;"
+    "    namedArgList : namedArg [firstExprOfList]"
+    "                 | namedArgList \",\" namedArg [appendStatement(0,2)]"
+    "                 ;"
+    "    namedArg : \"\\.\" identifier \"=\" expression [namedArg(1,3)]"
+    "             ;"
     "    primary_expression : identifier [return]"
     "                       | \"[0-9]+\" [convToInt]"
     "                       | \"([0-9]+(\\.[0-9]*)?|(\\.[0-9]+))((e|E)(\\+|\\-)?[0-9]+)?\" [convToFloat]"
@@ -1097,30 +1152,33 @@ void c()
     // "        ;"
     "    unary_reference : \"&\" expression [unaryReference(1)]"
     "                    ;"
-    "    expressions_list : expression [firstExprOfList]"
-    "                     | expressions_list \",\" expression [appendExprToList(0,2)]"
-    "                     ;"
+    "    expressionList : [createStatements]"
+    "                   | nonEmptyExpressionList %precedence \",\" [return]"
+    "                   ;"
+    "    nonEmptyExpressionList : expression [firstExprOfList]"
+    "                           | nonEmptyExpressionList \",\" expression [appendStatement(0,2)]"
+    "                           ;"
     "    identifier : \"[a-zA-Z_][a-zA-Z0-9_]*\" [convToId]"
     "               ;"
     "}";
   
-  // verbose=true;
+  //verbose=true;
   auto gCreateMoment=take_time();
   const auto c=createGrammar(cGrammar);
   std::cout<<"Time to create the grammar: "<<time_diff_with_now(gCreateMoment)<<"\n";
   
-  for(size_t iState=0;iState<c.states.size();iState++)
-    {
-      const GrammarState& state=c.states[iState];
+  // for(size_t iState=0;iState<c.states.size();iState++)
+  //   {
+  //     const GrammarState& state=c.states[iState];
       
-      std::cout<<"--\n";
+  //     std::cout<<"--\n";
       
-      std::cout<<"State "<<iState<<":\n"<<c.describe(state);
-      std::cout<<"has "<<c.transitionsOfStates[iState].size()<<" transitions:\n";
+  //     std::cout<<"State "<<iState<<":\n"<<c.describe(state);
+  //     std::cout<<"has "<<c.transitionsOfStates[iState].size()<<" transitions:\n";
       
-      for(const GrammarTransition& t : c.transitionsOfStates[iState])
-	std::cout<<c.describe(t);
-    }
+  //     for(const GrammarTransition& t : c.transitionsOfStates[iState])
+  // 	std::cout<<c.describe(t);
+  //   }
   
   // std::vector<std::vector<size_t>> arriveToStateFrom(c.states.size());
   // for(size_t iState=0;iState<c.states.size();iState++)
@@ -1232,9 +1290,8 @@ void c()
   
   PROVIDE_ACTION_WITH_N_SYMBOLS("unaryAssign",2,return std::make_shared<ASTNode>(AssignNode{.lhs=subNodes[0],.rhs=subNodes[1]}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("firstExprOfList",1,return std::make_shared<ASTNode>(ASTNodesNode{.subNodes{subNodes[0]}}));
-  PROVIDE_ACTION_WITH_N_SYMBOLS("appendExprToList",2,fetch<ASTNodesNode>(subNodes,0).subNodes.push_back(subNodes[1]);return subNodes[0]);
-  PROVIDE_ACTION_WITH_N_SYMBOLS("emptyFuncCall",1,return std::make_shared<ASTNode>(FuncCallNode{.fetch=subNodes[0],.args{}}));
-  PROVIDE_ACTION_WITH_N_SYMBOLS("funcCall",2,return std::make_shared<ASTNode>(FuncCallNode{.fetch=subNodes[0],.args=fetch<ASTNodesNode>(subNodes,1).subNodes}));
+  PROVIDE_ACTION_WITH_N_SYMBOLS("namedArg",2,return std::make_shared<ASTNode>(NamedArgNode{.name=fetch<IdNode>(subNodes,0).name,.expr=subNodes[1]}));
+  PROVIDE_ACTION_WITH_N_SYMBOLS("funcCall",2,return std::make_shared<ASTNode>(FuncCallNode{.getFun=subNodes[0],.args=fetch<ASTNodesNode>(subNodes,1).subNodes}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("funcReturn",1,return std::make_shared<ASTNode>(ReturnNode{.arg=subNodes[0]}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("subscribe",2,return std::make_shared<ASTNode>(SubscribeNode{.base=subNodes[0],.subscr=subNodes[1]}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("convToId",1,return std::make_shared<ASTNode>(IdNode{.name=unvariant<std::string>(fetch<ValueNode>(subNodes,0).value)}));
@@ -1242,7 +1299,6 @@ void c()
   PROVIDE_ACTION_WITH_N_SYMBOLS("ifStatement",2,return std::make_shared<ASTNode>(IfNode{.subNodes{subNodes}}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("ifElseStatement",3,return std::make_shared<ASTNode>(IfNode{.subNodes{subNodes}}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("forStatement",4,return std::make_shared<ASTNode>(ForNode{.subNodes{subNodes}}));
-  PROVIDE_ACTION_WITH_N_SYMBOLS("funcDefArg",1,return std::make_shared<ASTNode>(IdNode{.name=unvariant<std::string>(fetch<ValueNode>(subNodes,0).value)}));
   PROVIDE_ACTION_WITH_N_SYMBOLS("funcDef",3,
 				const std::string name=fetch<IdNode>(subNodes,0).name;
 				if(auto it=functionsTable.find(name);it!=functionsTable.end())
@@ -1256,16 +1312,24 @@ void c()
 				  std::visit(Overload{
 				      [&args](const IdNode& ass)
 				      {
-					args->try_emplace(ass.name,false,nullptr);
+					args->emplace_back(ass.name,false,nullptr);
 				      },
 					[&args](const AssignNode& ass)
 					{
-					  args->try_emplace(unvariant<IdNode>(*ass.lhs).name,false,ass.rhs);
+					  args->emplace_back(unvariant<IdNode>(*ass.lhs).name,false,ass.rhs);
 					},
 					[&args](const URefNode& ref)
 					{
-					  args->try_emplace(unvariant<IdNode>(*ref.op).name,true,nullptr);
+					  args->emplace_back(unvariant<IdNode>(*ref.op).name,true,nullptr);
 					}},*a);
+				
+				std::set<std::string> bk;
+				for(const auto& [aName,isRef,optDef] : (*args))
+				  {
+				    diagnostic("Ciao ",aName,"\n");
+				    if(const auto [it,res]=bk.insert(aName);not res)
+				      errorEmitter("argument ",aName," defined twice in function ",name);
+				  }
 				
 				return std::make_shared<ASTNode>(FuncDefNode{name,args,body});
 				);
@@ -1297,6 +1361,7 @@ void c()
   
   std::cout<<"Creating the parse tree\n";
   
+  // verbose=true;
   auto ptCreate=take_time();
   auto pt=
     createParseTree(c,&ext[0]);
